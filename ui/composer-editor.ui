@@ -66,6 +66,73 @@
           <class name="background"/>
         </style>
         <child>
+          <object class="GtkRevealer" id="ai_prompt_revealer">
+            <property name="visible">True</property>
+            <property name="transition_type">slide-up</property>
+            <child>
+              <object class="GtkBox" id="ai_prompt_box">
+                <property name="visible">True</property>
+                <property name="orientation">horizontal</property>
+                <property name="spacing">6</property>
+                <property name="margin_start">6</property>
+                <property name="margin_end">6</property>
+                <property name="margin_top">6</property>
+                <property name="margin_bottom">6</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="visible">True</property>
+                    <property name="icon_name">starred-symbolic</property>
+                    <property name="pixel_size">16</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">False</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkEntry" id="ai_prompt_entry">
+                    <property name="visible">True</property>
+                    <property name="hexpand">True</property>
+                    <property name="placeholder_text" translatable="yes">Describe the email you want to write...</property>
+                  </object>
+                  <packing>
+                    <property name="expand">True</property>
+                    <property name="fill">True</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkButton" id="ai_cancel_button">
+                    <property name="visible">True</property>
+                    <property name="label" translatable="yes">Cancel</property>
+                    <property name="focus_on_click">False</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">False</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkButton" id="ai_create_button">
+                    <property name="visible">True</property>
+                    <property name="label" translatable="yes">Create</property>
+                    <property name="focus_on_click">False</property>
+                    <style>
+                      <class name="suggested-action"/>
+                    </style>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">False</property>
+                  </packing>
+                </child>
+                <style>
+                  <class name="linked"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
           <object class="GtkRevealer" id="formatting">
             <property name="visible">True</property>
             <property name="transition_type">slide-up</property>
@@ -522,6 +589,26 @@
               </object>
               <packing>
                 <property name="position">1</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkButton" id="ai_help_button">
+                <property name="visible">True</property>
+                <property name="focus_on_click">False</property>
+                <property name="receives_default">False</property>
+                <property name="tooltip_text" translatable="yes">AI Writing Help</property>
+                <property name="action_name">edt.ai-help</property>
+                <property name="always_show_image">True</property>
+                <child>
+                  <object class="GtkImage" id="ai_help_image">
+                    <property name="visible">True</property>
+                    <property name="pixel_size">16</property>
+                    <property name="icon_name">starred-symbolic</property>
+                  </object>
+                </child>
+              </object>
+              <packing>
+                <property name="position">2</property>
               </packing>
             </child>
             <child>

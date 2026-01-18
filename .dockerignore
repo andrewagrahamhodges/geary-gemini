@@ -1,0 +1,29 @@
+# Build artifacts
+build/
+_build/
+dist/
+
+# Docker volumes (don't copy into image)
+.docker/
+
+# IDE/Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp

@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk+" version="3.20"/>
+  <template class="GeminiSidebar" parent="GtkBin">
+    <child>
+      <object class="GtkBox" id="main_box">
+        <property name="visible">True</property>
+        <property name="orientation">vertical</property>
+        <property name="width_request">320</property>
+        <style>
+          <class name="gemini-sidebar"/>
+        </style>
+        <!-- Header -->
+        <child>
+          <object class="GtkBox" id="header_box">
+            <property name="visible">True</property>
+            <property name="orientation">horizontal</property>
+            <property name="spacing">6</property>
+            <property name="margin_start">12</property>
+            <property name="margin_end">12</property>
+            <property name="margin_top">12</property>
+            <property name="margin_bottom">6</property>
+            <child>
+              <object class="GtkImage" id="gemini_icon">
+                <property name="visible">True</property>
+                <property name="icon_name">starred-symbolic</property>
+                <property name="icon_size">1</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="title_label">
+                <property name="visible">True</property>
+                <property name="label" translatable="yes">Gemini AI</property>
+                <property name="hexpand">True</property>
+                <property name="xalign">0</property>
+                <attributes>
+                  <attribute name="weight" value="bold"/>
+                </attributes>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="close_button">
+                <property name="visible">True</property>
+                <property name="relief">none</property>
+                <property name="tooltip_text" translatable="yes">Close sidebar</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="visible">True</property>
+                    <property name="icon_name">window-close-symbolic</property>
+                    <property name="icon_size">1</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator">
+            <property name="visible">True</property>
+            <property name="orientation">horizontal</property>
+          </object>
+        </child>
+        <!-- Status bar for install/auth -->
+        <child>
+          <object class="GtkRevealer" id="status_revealer">
+            <property name="visible">True</property>
+            <property name="reveal_child">False</property>
+            <property name="transition_type">slide-down</property>
+            <child>
+              <object class="GtkBox" id="status_box">
+                <property name="visible">True</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <property name="margin">12</property>
+                <child>
+                  <object class="GtkLabel" id="status_label">
+                    <property name="visible">True</property>
+                    <property name="label" translatable="yes">Gemini CLI is not installed.</property>
+                    <property name="wrap">True</property>
+                    <property name="xalign">0</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="install_button">
+                    <property name="visible">True</property>
+                    <property name="label" translatable="yes">Install Gemini CLI</property>
+                    <property name="halign">start</property>
+                    <style>
+                      <class name="suggested-action"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkSpinner" id="install_spinner">
+                    <property name="visible">False</property>
+                    <property name="halign">center</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <!-- Chat messages area -->
+        <child>
+          <object class="GtkScrolledWindow" id="chat_scrolled">
+            <property name="visible">True</property>
+            <property name="vexpand">True</property>
+            <property name="hscrollbar_policy">never</property>
+            <child>
+              <object class="GtkBox" id="chat_box">
+                <property name="visible">True</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <property name="margin">12</property>
+                <!-- Welcome message -->
+                <child>
+                  <object class="GtkLabel" id="welcome_label">
+                    <property name="visible">True</property>
+                    <property name="label" translatable="yes">Ask me anything about your emails or get help with tasks.</property>
+                    <property name="wrap">True</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <!-- Input area -->
+        <child>
+          <object class="GtkSeparator">
+            <property name="visible">True</property>
+            <property name="orientation">horizontal</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="input_box">
+            <property name="visible">True</property>
+            <property name="orientation">horizontal</property>
+            <property name="spacing">6</property>
+            <property name="margin">12</property>
+            <child>
+              <object class="GtkEntry" id="message_entry">
+                <property name="visible">True</property>
+                <property name="hexpand">True</property>
+                <property name="placeholder_text" translatable="yes">Type a message...</property>
+                <property name="activates_default">True</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="send_button">
+                <property name="visible">True</property>
+                <property name="sensitive">False</property>
+                <property name="tooltip_text" translatable="yes">Send message</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="visible">True</property>
+                    <property name="icon_name">mail-send-symbolic</property>
+                    <property name="icon_size">1</property>
+                  </object>
+                </child>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <!-- Loading indicator -->
+        <child>
+          <object class="GtkRevealer" id="loading_revealer">
+            <property name="visible">True</property>
+            <property name="reveal_child">False</property>
+            <property name="transition_type">slide-up</property>
+            <child>
+              <object class="GtkBox">
+                <property name="visible">True</property>
+                <property name="orientation">horizontal</property>
+                <property name="spacing">6</property>
+                <property name="margin">12</property>
+                <property name="halign">center</property>
+                <child>
+                  <object class="GtkSpinner" id="loading_spinner">
+                    <property name="visible">True</property>
+                    <property name="active">True</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="visible">True</property>
+                    <property name="label" translatable="yes">Thinking...</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

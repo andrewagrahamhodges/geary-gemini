@@ -87,7 +87,7 @@ javascriptcoregtk = dependency('javascriptcoregtk-4.1', version: '>=' + target_w
 json_glib = dependency('json-glib-1.0', version: '>= 1.0')
 libhandy = dependency('libhandy-1', version: '>= 1.6', required: false)
 libmath = cc.find_library('m')
-libpeas = dependency('libpeas-2')
+libpeas_dep = dependency('libpeas-2')
 libsecret = dependency('libsecret-1', version: '>= 0.11')
 libsoup = dependency('libsoup-3.0')
 libstemmer_dep = cc.find_library('stemmer')
@@ -130,6 +130,13 @@ libstemmer = declare_dependency(
   dependencies: [
     valac.find_library('libstemmer', dirs: [vapi_dir]),
     libstemmer_dep,
+  ],
+)
+
+libpeas = declare_dependency(
+  dependencies: [
+    valac.find_library('libpeas-2', dirs: [vapi_dir]),
+    libpeas_dep,
   ],
 )
 

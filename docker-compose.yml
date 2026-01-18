@@ -1,0 +1,96 @@
+# Geary-Gemini Build Orchestration
+#
+# Commands:
+#   docker compose run --rm build      - Configure and build Geary
+#   docker compose run --rm test       - Run unit tests
+#   docker compose run --rm package    - Build .deb package
+#   docker compose run --rm shell      - Interactive shell for debugging
+#   docker compose run --rm clean      - Clean build artifacts
+#
+# Output:
+#   Packages are placed in ./dist/
+
+services:
+  build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/src:ro
+      - build-cache:/build
+      - ./dist:/output
+    working_dir: /src
+    command:
+      - bash
+      - -c
+      - |
+        echo '=== Configuring Geary with Meson ===' &&
+        meson setup /build/meson --prefix=/usr --buildtype=release -Dprofile=release &&
+        echo '=== Building with Ninja ===' &&
+        ninja -C /build/meson &&
+        echo '=== Build complete ===' &&
+        echo 'Run: docker compose run --rm test    - to run tests' &&
+        echo 'Run: docker compose run --rm package - to create .deb'
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/src:ro
+      - build-cache:/build
+      - ./dist:/output
+    working_dir: /src
+    command:
+      - bash
+      - -c
+      - |
+        echo '=== Running Geary Tests ===' &&
+        if [ ! -d /build/meson ]; then
+          echo 'Build not found. Running build first...' &&
+          meson setup /build/meson --prefix=/usr --buildtype=release &&
+          ninja -C /build/meson
+        fi &&
+        meson test -C /build/meson --verbose
+
+  package:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/src:ro
+      - build-cache:/build
+      - ./dist:/output
+    working_dir: /src
+    command: ["bash", "/src/build-aux/make-deb.sh"]
+
+  shell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/src
+      - build-cache:/build
+      - ./dist:/output
+    working_dir: /src
+    stdin_open: true
+    tty: true
+    command: bash
+
+  clean:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - build-cache:/build
+    command:
+      - bash
+      - -c
+      - |
+        echo '=== Cleaning build artifacts ===' &&
+        rm -rf /build/* &&
+        echo 'Build cache cleared.'
+
+volumes:
+  build-cache:
+    name: geary-gemini-build-cache

@@ -12,10 +12,10 @@
  */
 public class Application.Client : Gtk.Application {
 
-    public const string NAME = "Geary" + Config.NAME_SUFFIX;
+    public const string NAME = "Geary-Gemini" + Config.NAME_SUFFIX;
     public const string RESOURCE_BASE_PATH = "/org/gnome/Geary";
     public const string SCHEMA_ID = "org.gnome.Geary";
-    public const string DESCRIPTION = _("Send and receive email");
+    public const string DESCRIPTION = _("Send and receive email with Gemini AI");
     public const string COPYRIGHT_1 = _("Copyright © 2016 Software Freedom Conservancy Inc.");
     public const string COPYRIGHT_2 = _("Copyright © 2016-2021 Geary Development Team.");
 

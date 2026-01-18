@@ -31,6 +31,9 @@ public class Application.MainWindow :
     public const string ACTION_TRASH_CONVERSATION = "trash-conversation";
     public const string ACTION_ZOOM = "zoom";
     public const string ACTION_NAVIGATION_BACK = "navigation-back";
+    public const string ACTION_TRANSLATE_CONVERSATION = "translate-conversation";
+    public const string ACTION_SUMMARIZE_CONVERSATION = "summarize-conversation";
+    public const string ACTION_TOGGLE_GEMINI_SIDEBAR = "toggle-gemini-sidebar";
 
     private const ActionEntry[] EDIT_ACTIONS = {
         { Action.Edit.UNDO, on_undo },
@@ -65,6 +68,10 @@ public class Application.MainWindow :
         { ACTION_TOGGLE_JUNK, on_mark_as_junk_toggle },
         // Message viewer
         { ACTION_ZOOM, on_zoom, "s" },
+        // Gemini AI actions
+        { ACTION_TRANSLATE_CONVERSATION, on_translate_conversation },
+        { ACTION_SUMMARIZE_CONVERSATION, on_summarize_conversation },
+        { ACTION_TOGGLE_GEMINI_SIDEBAR, on_toggle_gemini_sidebar },
     };
 
     // Handy leaflet children names
@@ -414,6 +421,14 @@ public class Application.MainWindow :
 
     [GtkChild] private unowned Components.InfoBarStack info_bars;
 
+
+    // Gemini sidebar
+    [GtkChild] private unowned Gtk.Revealer gemini_sidebar_revealer;
+    [GtkChild] private unowned Gtk.Separator gemini_separator;
+    [GtkChild] private unowned Gtk.Box gemini_sidebar_container;
+
+    private Gemini.Service gemini_service;
+    private Gemini.Sidebar? gemini_sidebar = null;
     private Components.ConversationActions[] folder_conversation_actions = {};
 
     private Components.InfoBar offline_infobar;
@@ -605,6 +620,9 @@ public class Application.MainWindow :
         update_conversation_actions(NONE);
 
         this.attachments = new AttachmentManager(this);
+
+        // Initialize Gemini service
+        this.gemini_service = new Gemini.Service();
 
         this.update_ui_timeout = new Geary.TimeoutManager.seconds(
             UPDATE_UI_INTERVAL, on_update_ui_timeout
@@ -2436,6 +2454,76 @@ public class Application.MainWindow :
 
     private void on_forward_conversation() {
         reply_conversation(FORWARD);
+    }
+
+    private void on_translate_conversation() {
+        this.translate_current_conversation.begin();
+    }
+
+    private async void translate_current_conversation() {
+        var dominated = this.conversation_list_view.get_selected_conversations();
+        if (dominated.is_empty) {
+            error_bell();
+            return;
+        }
+
+        // Get the email content from the conversation viewer
+        var viewer = this.conversation_viewer;
+        if (viewer == null) {
+            error_bell();
+            return;
+        }
+
+        // TODO: Get email body text, translate via Gemini.Service, display result
+        // For now, show a placeholder notification
+        var notification = new Components.InAppNotification(
+            _("Translation feature coming soon")
+        );
+        add_notification(notification);
+    }
+
+    private void on_summarize_conversation() {
+        this.summarize_current_conversation.begin();
+    }
+
+    private async void summarize_current_conversation() {
+        var dominated = this.conversation_list_view.get_selected_conversations();
+        if (dominated.is_empty) {
+            error_bell();
+            return;
+        }
+
+        // Get the email content from the conversation viewer
+        var viewer = this.conversation_viewer;
+        if (viewer == null) {
+            error_bell();
+            return;
+        }
+
+        // TODO: Get email body text, summarize via Gemini.Service, display result
+        // For now, show a placeholder notification
+        var notification = new Components.InAppNotification(
+            _("Summarize feature coming soon")
+        );
+        add_notification(notification);
+    }
+
+    private void on_toggle_gemini_sidebar() {
+        // Create sidebar if it does not exist
+        if (this.gemini_sidebar == null) {
+            this.gemini_sidebar = new Gemini.Sidebar(this.gemini_service);
+            this.gemini_sidebar.close_requested.connect(() => {
+                this.gemini_sidebar_revealer.reveal_child = false;
+                this.gemini_separator.visible = false;
+            });
+            this.gemini_sidebar_container.pack_start(this.gemini_sidebar, true, true, 0);
+            this.gemini_sidebar.show();
+        }
+
+        // Toggle visibility
+        bool is_visible = this.gemini_sidebar_revealer.reveal_child;
+        this.gemini_sidebar_revealer.reveal_child = !is_visible;
+        this.gemini_separator.visible = !is_visible;
     }
 
     private void on_show_window_menu() {

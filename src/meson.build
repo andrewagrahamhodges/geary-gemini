@@ -137,7 +137,7 @@ valadoc_dependencies = [
   javascriptcoregtk,
   json_glib,
   libhandy,
-  libpeas,
+  # libpeas excluded - uses custom vapi, handled separately below
   libsecret,
   libxml,
   sqlite,
@@ -168,6 +168,7 @@ endforeach
 valadoc_dep_args += [ '--pkg', 'config' ]
 valadoc_dep_args += [ '--pkg', 'icu-uc' ]
 valadoc_dep_args += [ '--pkg', 'libstemmer' ]
+valadoc_dep_args += [ '--pkg', 'libpeas-2' ]
 valadoc_dep_args += [ '--pkg', 'posix' ]
 
 valadoc_vapidir_args = []

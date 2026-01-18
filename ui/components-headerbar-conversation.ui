@@ -53,6 +53,25 @@
           </object>
         </child>
         <child>
+          <object class="GtkToggleButton" id="gemini_button">
+            <property name="visible">True</property>
+            <property name="focus_on_click">False</property>
+            <property name="receives_default">False</property>
+            <property name="tooltip_text" translatable="yes">Toggle Gemini AI sidebar</property>
+            <property name="action_name">win.toggle-gemini-sidebar</property>
+            <child>
+              <object class="GtkImage" id="gemini_image">
+                <property name="visible">True</property>
+                <property name="icon_name">starred-symbolic</property>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="pack_type">end</property>
+            <property name="position">0</property>
+          </packing>
+        </child>
+        <child>
           <object class="GtkToggleButton" id="find_button">
             <property name="visible">True</property>
             <property name="focus_on_click">False</property>
@@ -68,7 +87,7 @@
           </object>
           <packing>
             <property name="pack_type">end</property>
-            <property name="position">0</property>
+            <property name="position">1</property>
           </packing>
         </child>
       </object>

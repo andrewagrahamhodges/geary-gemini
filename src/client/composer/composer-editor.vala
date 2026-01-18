@@ -39,6 +39,7 @@ public class Composer.Editor : Gtk.Grid, Geary.BaseInterface {
     internal const string ACTION_TEXT_FORMAT = "text-format";
     private const string ACTION_ULIST = "ulist";
     private const string ACTION_UNDERLINE = "underline";
+    private const string ACTION_AI_HELP = "ai-help";
 
     // ACTION_INSERT_LINK and ACTION_REMOVE_FORMAT are missing from
     // here since they are handled in update_selection_actions
@@ -79,6 +80,7 @@ public class Composer.Editor : Gtk.Grid, Geary.BaseInterface {
                                            on_text_format                     },
         { ACTION_ULIST,                    on_ulist                           },
         { ACTION_UNDERLINE,                on_action,        null, "false"    },
+        { ACTION_AI_HELP,                  on_ai_help                         },
     };
 
 
@@ -147,10 +149,18 @@ public class Composer.Editor : Gtk.Grid, Geary.BaseInterface {
     [GtkChild] private unowned Gtk.Image font_color_icon;
     [GtkChild] private unowned Gtk.MenuButton more_options_button;
 
+    [GtkChild] private unowned Gtk.Revealer ai_prompt_revealer;
+    [GtkChild] private unowned Gtk.Entry ai_prompt_entry;
+    [GtkChild] private unowned Gtk.Button ai_cancel_button;
+    [GtkChild] private unowned Gtk.Button ai_create_button;
+
     private Gtk.GestureMultiPress click_gesture;
 
 
     internal signal void insert_image(bool from_clipboard);
+
+    /** Signal emitted when user requests AI-generated text. */
+    internal signal void ai_generate_requested(string prompt);
 
 
     internal Editor(Application.Configuration config) {
@@ -205,6 +215,11 @@ public class Composer.Editor : Gtk.Grid, Geary.BaseInterface {
         spell_check_popover.selection_changed.connect((active_langs) => {
             config.set_spell_check_languages(active_langs);
         });
+
+        // AI prompt bar button handlers
+        this.ai_cancel_button.clicked.connect(on_ai_cancel);
+        this.ai_create_button.clicked.connect(on_ai_create);
+        this.ai_prompt_entry.activate.connect(on_ai_create);
 
         this.show_background_work_timeout = new Geary.TimeoutManager.milliseconds(
             Util.Gtk.SHOW_PROGRESS_TIMEOUT_MSEC, this.on_background_work_timeout
@@ -715,6 +730,43 @@ public class Composer.Editor : Gtk.Grid, Geary.BaseInterface {
 
     private void on_open_inspector() {
         this.body.get_inspector().show();
+    }
+
+    private void on_ai_help() {
+        // Toggle the AI prompt bar visibility
+        bool is_visible = this.ai_prompt_revealer.reveal_child;
+        this.ai_prompt_revealer.reveal_child = !is_visible;
+        if (!is_visible) {
+            // Focus the entry when showing
+            this.ai_prompt_entry.grab_focus();
+        }
+    }
+
+    private void on_ai_cancel() {
+        this.ai_prompt_revealer.reveal_child = false;
+        this.ai_prompt_entry.text = "";
+    }
+
+    private void on_ai_create() {
+        string prompt = this.ai_prompt_entry.text.strip();
+        if (prompt.length > 0) {
+            // Emit signal for the composer widget to handle
+            ai_generate_requested(prompt);
+            // Hide the prompt bar
+            this.ai_prompt_revealer.reveal_child = false;
+            this.ai_prompt_entry.text = "";
+        }
+    }
+
+    /**
+     * Insert text into the editor body.
+     */
+    internal void insert_text(string text) {
+        // Convert newlines to <br> for HTML
+        string html_text = text.replace("\n", "<br>");
+        this.body.execute_editing_command_with_argument(
+            "insertHTML", html_text
+        );
     }
 
 }

@@ -48,6 +48,7 @@
     <file compressed="true" preprocess="xml-stripblanks">find_bar.glade</file>
     <file compressed="true" preprocess="xml-stripblanks">folder-popover.ui</file>
     <file compressed="true" preprocess="xml-stripblanks">folder-popover-row.ui</file>
+    <file compressed="true" preprocess="xml-stripblanks">gemini-sidebar.ui</file>
     <file compressed="true" preprocess="xml-stripblanks">gtk/help-overlay.ui</file>
     <file compressed="true" preprocess="xml-stripblanks">password-dialog.glade</file>
     <file compressed="true" preprocess="xml-stripblanks">problem-details-dialog.ui</file>
