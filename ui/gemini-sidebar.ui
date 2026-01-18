@@ -38,20 +38,6 @@
                 </attributes>
               </object>
             </child>
-            <child>
-              <object class="GtkButton" id="close_button">
-                <property name="visible">True</property>
-                <property name="relief">none</property>
-                <property name="tooltip_text" translatable="yes">Close sidebar</property>
-                <child>
-                  <object class="GtkImage">
-                    <property name="visible">True</property>
-                    <property name="icon_name">window-close-symbolic</property>
-                    <property name="icon_size">1</property>
-                  </object>
-                </child>
-              </object>
-            </child>
           </object>
         </child>
         <child>
@@ -60,7 +46,7 @@
             <property name="orientation">horizontal</property>
           </object>
         </child>
-        <!-- Status bar for install/auth -->
+        <!-- Status bar for authentication -->
         <child>
           <object class="GtkRevealer" id="status_revealer">
             <property name="visible">True</property>
@@ -75,25 +61,19 @@
                 <child>
                   <object class="GtkLabel" id="status_label">
                     <property name="visible">True</property>
-                    <property name="label" translatable="yes">Gemini CLI is not installed.</property>
+                    <property name="label" translatable="yes">Sign in with your Google account to use Gemini AI features.</property>
                     <property name="wrap">True</property>
                     <property name="xalign">0</property>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkButton" id="install_button">
+                  <object class="GtkButton" id="login_button">
                     <property name="visible">True</property>
-                    <property name="label" translatable="yes">Install Gemini CLI</property>
+                    <property name="label" translatable="yes">Login with Google</property>
                     <property name="halign">start</property>
                     <style>
                       <class name="suggested-action"/>
                     </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkSpinner" id="install_spinner">
-                    <property name="visible">False</property>
-                    <property name="halign">center</property>
                   </object>
                 </child>
               </object>

@@ -14,17 +14,12 @@
 [GtkTemplate (ui = "/org/gnome/Geary/gemini-sidebar.ui")]
 public class Gemini.Sidebar : Gtk.Bin {
 
-    /** Signal emitted when the close button is clicked. */
-    public signal void close_requested();
-
     /** The Gemini service instance. */
     public Gemini.Service service { get; construct; }
 
-    [GtkChild] private unowned Gtk.Button close_button;
     [GtkChild] private unowned Gtk.Revealer status_revealer;
     [GtkChild] private unowned Gtk.Label status_label;
-    [GtkChild] private unowned Gtk.Button install_button;
-    [GtkChild] private unowned Gtk.Spinner install_spinner;
+    [GtkChild] private unowned Gtk.Button login_button;
     [GtkChild] private unowned Gtk.ScrolledWindow chat_scrolled;
     [GtkChild] private unowned Gtk.Box chat_box;
     [GtkChild] private unowned Gtk.Label welcome_label;
@@ -44,79 +39,80 @@ public class Gemini.Sidebar : Gtk.Bin {
 
     construct {
         // Connect signals
-        this.close_button.clicked.connect(on_close_clicked);
-        this.install_button.clicked.connect(on_install_clicked);
+        this.login_button.clicked.connect(on_login_clicked);
         this.send_button.clicked.connect(on_send_clicked);
         this.message_entry.changed.connect(on_entry_changed);
         this.message_entry.activate.connect(on_send_clicked);
 
         // Connect service signals
-        this.service.install_started.connect(on_install_started);
-        this.service.install_completed.connect(on_install_completed);
+        this.service.authentication_required.connect(on_authentication_required);
+        this.service.authentication_completed.connect(on_authentication_completed);
 
         // Check initial state
         check_gemini_status();
     }
 
     /**
-     * Check if Gemini CLI is installed and update UI accordingly.
+     * Check if Gemini CLI is installed and authenticated, update UI accordingly.
      */
     private void check_gemini_status() {
-        if (this.service.is_installed()) {
-            this.status_revealer.reveal_child = false;
-            this.message_entry.sensitive = true;
-        } else {
+        if (!this.service.is_installed()) {
+            // This shouldn't happen if .deb installed correctly
+            this.status_label.label = _("Gemini CLI not found. Please reinstall geary-gemini.");
             this.status_revealer.reveal_child = true;
+            this.login_button.visible = false;
             this.message_entry.sensitive = false;
-
-            if (!this.service.is_npm_available()) {
-                this.status_label.label = _("Node.js (npm) is required to install Gemini CLI.\nPlease install Node.js from https://nodejs.org");
-                this.install_button.sensitive = false;
-            } else {
-                this.status_label.label = _("Gemini CLI is not installed.\nClick below to install it.");
-                this.install_button.sensitive = true;
-            }
+            return;
         }
-    }
 
-    private void on_close_clicked() {
-        close_requested();
-    }
-
-    private void on_install_clicked() {
-        this.service.install.begin((obj, res) => {
-            try {
-                this.service.install.end(res);
-                check_gemini_status();
-            } catch (Error e) {
-                show_error(_("Failed to install Gemini CLI: %s").printf(e.message));
+        // Check authentication asynchronously
+        this.service.check_authenticated.begin((obj, res) => {
+            bool authenticated = this.service.check_authenticated.end(res);
+            if (authenticated) {
+                this.status_revealer.reveal_child = false;
+                this.message_entry.sensitive = true;
+            } else {
+                this.status_label.label = _("Sign in with your Google account to use Gemini AI features.");
+                this.status_revealer.reveal_child = true;
+                this.login_button.visible = true;
+                this.login_button.sensitive = true;
+                this.message_entry.sensitive = false;
             }
         });
     }
 
-    private void on_install_started() {
-        this.install_button.visible = false;
-        this.install_spinner.visible = true;
-        this.install_spinner.start();
-        this.status_label.label = _("Installing Gemini CLI...");
+    private void on_login_clicked() {
+        this.login_button.sensitive = false;
+        this.status_label.label = _("Opening browser for Google sign-in...");
+
+        this.service.authenticate.begin((obj, res) => {
+            try {
+                this.service.authenticate.end(res);
+                check_gemini_status();
+            } catch (Error e) {
+                this.status_label.label = _("Login failed: %s").printf(e.message);
+                this.login_button.sensitive = true;
+            }
+        });
     }
 
-    private void on_install_completed(bool success, string? error_message) {
-        this.install_spinner.stop();
-        this.install_spinner.visible = false;
-        this.install_button.visible = true;
+    private void on_authentication_required() {
+        this.status_label.label = _("Please sign in with Google to continue.");
+        this.status_revealer.reveal_child = true;
+        this.login_button.visible = true;
+        this.login_button.sensitive = true;
+        this.message_entry.sensitive = false;
+    }
 
+    private void on_authentication_completed(bool success, string? error_message) {
         if (success) {
-            this.status_label.label = _("Gemini CLI installed successfully!");
-            // Hide status after a delay
-            GLib.Timeout.add(2000, () => {
-                check_gemini_status();
-                return false;
-            });
+            this.status_revealer.reveal_child = false;
+            this.message_entry.sensitive = true;
         } else {
-            this.status_label.label = _("Installation failed: %s").printf(
+            this.status_label.label = _("Login failed: %s").printf(
                 error_message ?? _("Unknown error")
             );
+            this.login_button.sensitive = true;
         }
     }
 
@@ -212,14 +208,6 @@ public class Gemini.Sidebar : Gtk.Bin {
             adj.value = adj.upper - adj.page_size;
             return false;
         });
-    }
-
-    /**
-     * Show an error message in the status area.
-     */
-    private void show_error(string message) {
-        this.status_label.label = message;
-        this.status_revealer.reveal_child = true;
     }
 
     /**

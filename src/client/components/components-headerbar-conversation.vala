@@ -17,6 +17,7 @@
 public class Components.ConversationHeaderBar : Gtk.Bin {
 
     public bool find_open { get; set; default = false; }
+    public bool gemini_open { get; set; default = false; }
 
     public ConversationActions shown_actions {
         get {
@@ -29,6 +30,7 @@ public class Components.ConversationHeaderBar : Gtk.Bin {
     [GtkChild] public unowned ConversationActions compact_actions;
 
     [GtkChild] private unowned Gtk.ToggleButton find_button;
+    [GtkChild] private unowned Gtk.ToggleButton gemini_button;
     [GtkChild] public unowned Gtk.Button back_button;
 
     [GtkChild] private unowned Hdy.HeaderBar conversation_header;
@@ -50,6 +52,12 @@ public class Components.ConversationHeaderBar : Gtk.Bin {
         this.bind_property(
             "find-open",
             this.find_button, "active",
+            SYNC_CREATE | BIDIRECTIONAL
+        );
+
+        this.bind_property(
+            "gemini-open",
+            this.gemini_button, "active",
             SYNC_CREATE | BIDIRECTIONAL
         );
     }

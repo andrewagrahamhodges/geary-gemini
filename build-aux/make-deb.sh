@@ -14,6 +14,29 @@ echo '=== Installing to staging directory ==='
 rm -rf /build/staging
 DESTDIR=/build/staging meson install -C /build/meson
 
+echo '=== Bundling Node.js and gemini-cli ==='
+NODE_VERSION="v22.12.0"
+NODE_TARBALL="node-${NODE_VERSION}-linux-x64.tar.xz"
+NODE_URL="https://nodejs.org/dist/${NODE_VERSION}/${NODE_TARBALL}"
+GEMINI_BUNDLE_DIR="/build/staging/usr/share/geary-gemini"
+
+echo "Downloading Node.js ${NODE_VERSION}..."
+curl -fsSL "${NODE_URL}" -o "/tmp/${NODE_TARBALL}"
+
+echo "Extracting Node.js..."
+mkdir -p "${GEMINI_BUNDLE_DIR}/node"
+tar -xf "/tmp/${NODE_TARBALL}" -C "${GEMINI_BUNDLE_DIR}/node" --strip-components=1
+
+echo "Installing gemini-cli..."
+export PATH="${GEMINI_BUNDLE_DIR}/node/bin:$PATH"
+npm install --prefix "${GEMINI_BUNDLE_DIR}" @google/gemini-cli
+
+echo "Cleaning up to reduce package size..."
+rm "/tmp/${NODE_TARBALL}"
+rm -rf "${GEMINI_BUNDLE_DIR}/node/share/doc"
+rm -rf "${GEMINI_BUNDLE_DIR}/node/share/man"
+rm -rf "${GEMINI_BUNDLE_DIR}/node/include"
+
 echo '=== Building .deb package ==='
 mkdir -p /build/staging/DEBIAN
 

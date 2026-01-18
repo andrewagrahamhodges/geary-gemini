@@ -150,6 +150,50 @@
                             <property name="position">0</property>
                           </packing>
                         </child>
+                        <!-- Horizontal box for conversation content and Gemini sidebar -->
+                        <child>
+                          <object class="GtkBox" id="conversation_content_box">
+                            <property name="visible">True</property>
+                            <property name="orientation">horizontal</property>
+                            <property name="hexpand">True</property>
+                            <property name="vexpand">True</property>
+                            <!-- conversation_viewer will be added here dynamically -->
+                            <!-- Gemini sidebar separator -->
+                            <child>
+                              <object class="GtkSeparator" id="gemini_separator">
+                                <property name="visible">False</property>
+                                <property name="orientation">vertical</property>
+                                <style>
+                                  <class name="sidebar"/>
+                                </style>
+                              </object>
+                            </child>
+                            <!-- Gemini sidebar -->
+                            <child>
+                              <object class="GtkRevealer" id="gemini_sidebar_revealer">
+                                <property name="visible">False</property>
+                                <property name="reveal_child">False</property>
+                                <property name="transition_type">slide-left</property>
+                                <property name="transition_duration">200</property>
+                                <child>
+                                  <object class="GtkBox" id="gemini_sidebar_container">
+                                    <property name="visible">True</property>
+                                    <property name="orientation">vertical</property>
+                                    <property name="width_request">320</property>
+                                    <style>
+                                      <class name="sidebar"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                          <packing>
+                            <property name="expand">True</property>
+                            <property name="fill">True</property>
+                            <property name="position">1</property>
+                          </packing>
+                        </child>
                         <child>
                           <object class="GtkRevealer" id="conversation_viewer_actions_revealer">
                             <property name="visible">True</property>
@@ -189,34 +233,6 @@
                 <style>
                   <class name="geary-main-layout"/>
                 </style>
-              </object>
-            </child>
-            <!-- Gemini sidebar -->
-            <child>
-              <object class="GtkSeparator" id="gemini_separator">
-                <property name="visible">False</property>
-                <property name="orientation">vertical</property>
-                <style>
-                  <class name="sidebar"/>
-                </style>
-              </object>
-            </child>
-            <child>
-              <object class="GtkRevealer" id="gemini_sidebar_revealer">
-                <property name="visible">True</property>
-                <property name="reveal_child">False</property>
-                <property name="transition_type">slide-left</property>
-                <property name="transition_duration">200</property>
-                <child>
-                  <object class="GtkBox" id="gemini_sidebar_container">
-                    <property name="visible">True</property>
-                    <property name="orientation">vertical</property>
-                    <property name="width_request">320</property>
-                    <style>
-                      <class name="sidebar"/>
-                    </style>
-                  </object>
-                </child>
               </object>
             </child>
           </object>

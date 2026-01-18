@@ -532,9 +532,13 @@ public class Application.Client : Gtk.Application {
     public async void show_about() {
         yield this.present();
 
+        // Build timestamp for debugging
+        string build_time = "Build: 2026-01-18 22:58 UTC";
+        string full_comments = "%s\n\n%s".printf(DESCRIPTION, build_time);
+
         Gtk.show_about_dialog(get_active_window(),
             "program-name", NAME,
-            "comments", DESCRIPTION,
+            "comments", full_comments,
             "authors", AUTHORS,
             "copyright", string.join("\n", COPYRIGHT_1, COPYRIGHT_2),
             "license-type", Gtk.License.LGPL_2_1,

@@ -415,6 +415,7 @@ public class Application.MainWindow :
     [GtkChild] private unowned Components.ConversationActions conversation_viewer_actions;
 
     [GtkChild] private unowned Gtk.Box conversation_viewer_box;
+    [GtkChild] private unowned Gtk.Box conversation_content_box;
     [GtkChild] private unowned Gtk.Revealer conversation_viewer_actions_revealer;
 
     [GtkChild] private unowned Gtk.Overlay overlay;
@@ -1364,7 +1365,10 @@ public class Application.MainWindow :
         );
 
         this.conversation_viewer.hexpand = true;
-        this.conversation_viewer_box.add(this.conversation_viewer);
+        this.conversation_viewer.vexpand = true;
+        // Add to content box (before the sidebar separator and revealer)
+        this.conversation_content_box.pack_start(this.conversation_viewer, true, true, 0);
+        this.conversation_content_box.reorder_child(this.conversation_viewer, 0);
 
         this.conversation_list_headerbar.bind_property(
             "search-open",
@@ -2512,18 +2516,20 @@ public class Application.MainWindow :
         // Create sidebar if it does not exist
         if (this.gemini_sidebar == null) {
             this.gemini_sidebar = new Gemini.Sidebar(this.gemini_service);
-            this.gemini_sidebar.close_requested.connect(() => {
-                this.gemini_sidebar_revealer.reveal_child = false;
-                this.gemini_separator.visible = false;
-            });
             this.gemini_sidebar_container.pack_start(this.gemini_sidebar, true, true, 0);
             this.gemini_sidebar.show();
         }
 
         // Toggle visibility
         bool is_visible = this.gemini_sidebar_revealer.reveal_child;
-        this.gemini_sidebar_revealer.reveal_child = !is_visible;
-        this.gemini_separator.visible = !is_visible;
+        set_gemini_sidebar_visible(!is_visible);
+    }
+
+    private void set_gemini_sidebar_visible(bool visible) {
+        this.gemini_sidebar_revealer.visible = visible;
+        this.gemini_sidebar_revealer.reveal_child = visible;
+        this.gemini_separator.visible = visible;
+        this.conversation_headerbar.gemini_open = visible;
     }
 
     private void on_show_window_menu() {

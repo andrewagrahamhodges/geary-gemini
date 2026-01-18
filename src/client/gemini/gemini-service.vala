@@ -9,27 +9,33 @@
  * Service for interacting with Google's Gemini CLI.
  *
  * This service handles:
- * - Auto-installation of gemini-cli via npm
  * - Authentication with Google
  * - Translation, summarization, and chat features
+ *
+ * Node.js and gemini-cli are bundled in the .deb package at /usr/share/geary-gemini/
  */
 public class Gemini.Service : GLib.Object {
 
-    private const string GEMINI_CLI_PACKAGE = "@google/gemini-cli";
-    private const string GEMINI_COMMAND = "gemini";
+    // Bundled paths - installed by .deb package
+    private const string NODE_BINARY = "/usr/share/geary-gemini/node/bin/node";
+    private const string GEMINI_BINARY = "/usr/share/geary-gemini/node_modules/.bin/gemini";
 
-    private string? gemini_path = null;
-    private bool is_authenticated = false;
+    // System prompt to restrict Gemini's behavior
+    private const string SYSTEM_PROMPT = """You are an AI assistant integrated into the Geary email client. Your role is to help users with email-related tasks such as:
+- Answering questions about emails
+- Helping compose and draft emails
+- Summarizing email content
+- Translating emails
 
-    /**
-     * Signal emitted when gemini-cli installation starts.
-     */
-    public signal void install_started();
+IMPORTANT RESTRICTIONS:
+- You do NOT have access to the user's computer, file system, or any external tools
+- You cannot execute commands, run scripts, or access the internet
+- You cannot read, write, or modify files on the user's system
+- You can only process text that is explicitly provided to you
+- Do not attempt to perform any actions outside of text-based assistance
+- If asked to do something outside your capabilities, politely explain that you can only help with text-based email tasks
 
-    /**
-     * Signal emitted when gemini-cli installation completes.
-     */
-    public signal void install_completed(bool success, string? error_message);
+In the future, you may be given specific Geary email tools to use. Until then, you can only provide text-based assistance.""";
 
     /**
      * Signal emitted when authentication is required.
@@ -37,108 +43,34 @@ public class Gemini.Service : GLib.Object {
     public signal void authentication_required();
 
     /**
-     * Get the installation directory for gemini-cli.
+     * Signal emitted when authentication completes.
      */
-    private string get_install_dir() {
-        return Path.build_filename(
-            Environment.get_user_data_dir(),
-            "geary-gemini"
-        );
-    }
+    public signal void authentication_completed(bool success, string? error_message);
 
     /**
-     * Get the path to the local gemini binary.
-     */
-    private string get_local_gemini_path() {
-        return Path.build_filename(
-            get_install_dir(),
-            "node_modules", ".bin", "gemini"
-        );
-    }
-
-    /**
-     * Check if gemini-cli is installed and return its path.
-     */
-    public string? find_gemini_cli() {
-        // First check if already cached
-        if (this.gemini_path != null) {
-            return this.gemini_path;
-        }
-
-        // Check system PATH
-        string? system_path = Environment.find_program_in_path(GEMINI_COMMAND);
-        if (system_path != null) {
-            this.gemini_path = system_path;
-            return this.gemini_path;
-        }
-
-        // Check local install
-        string local_path = get_local_gemini_path();
-        if (FileUtils.test(local_path, FileTest.EXISTS | FileTest.IS_EXECUTABLE)) {
-            this.gemini_path = local_path;
-            return this.gemini_path;
-        }
-
-        return null;
-    }
-
-    /**
-     * Check if npm is available.
-     */
-    public bool is_npm_available() {
-        return Environment.find_program_in_path("npm") != null;
-    }
-
-    /**
-     * Check if gemini-cli is installed.
+     * Check if gemini-cli is installed (bundled with the package).
      */
     public bool is_installed() {
-        return find_gemini_cli() != null;
+        return FileUtils.test(GEMINI_BINARY, FileTest.EXISTS);
     }
 
     /**
-     * Install gemini-cli using npm.
+     * Check if user is authenticated with Google.
      */
-    public async void install() throws Error {
-        if (!is_npm_available()) {
-            throw new IOError.NOT_FOUND(
-                "npm is not installed. Please install Node.js from https://nodejs.org"
-            );
+    public async bool check_authenticated() {
+        if (!is_installed()) {
+            return false;
         }
-
-        install_started();
-
-        string install_dir = get_install_dir();
-
-        // Create install directory
-        DirUtils.create_with_parents(install_dir, 0755);
 
         try {
             var subprocess = new Subprocess(
-                SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_MERGE,
-                "npm", "install", "--prefix", install_dir, GEMINI_CLI_PACKAGE + "@latest"
+                SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE,
+                NODE_BINARY, GEMINI_BINARY, "auth", "status"
             );
-
             yield subprocess.wait_async();
-
-            if (subprocess.get_successful()) {
-                // Clear cached path to re-detect
-                this.gemini_path = null;
-                install_completed(true, null);
-            } else {
-                string? stderr_output = null;
-                try {
-                    yield subprocess.communicate_utf8_async(null, null, null, out stderr_output);
-                } catch (Error e) {
-                    // Ignore
-                }
-                throw new IOError.FAILED(
-                    "Failed to install gemini-cli: %s".printf(stderr_output ?? "unknown error")
-                );
-            }
+            return subprocess.get_successful();
         } catch (Error e) {
-            install_completed(false, e.message);
-            throw e;
+            return false;
         }
     }
 
@@ -146,53 +78,38 @@ public class Gemini.Service : GLib.Object {
      * Authenticate with Google (opens browser).
      */
     public async void authenticate() throws Error {
-        string? gemini = find_gemini_cli();
-        if (gemini == null) {
-            throw new IOError.NOT_FOUND("gemini-cli is not installed");
+        if (!is_installed()) {
+            throw new IOError.NOT_FOUND("Gemini CLI is not installed. Please reinstall geary-gemini.");
         }
 
         var subprocess = new Subprocess(
-            SubprocessFlags.NONE,
-            gemini, "auth", "login"
+            SubprocessFlags.NONE,  // Interactive - opens browser
+            NODE_BINARY, GEMINI_BINARY, "auth", "login"
         );
 
         yield subprocess.wait_async();
 
-        if (subprocess.get_successful()) {
-            this.is_authenticated = true;
-        } else {
+        if (!subprocess.get_successful()) {
+            authentication_completed(false, "Authentication failed");
             throw new IOError.FAILED("Authentication failed");
         }
-    }
 
-    /**
-     * Ensure gemini-cli is available, prompting for install if needed.
-     * Returns true if ready to use, false if user cancelled.
-     */
-    public async bool ensure_ready() throws Error {
-        if (is_installed()) {
-            return true;
-        }
-
-        // Signal that we need to show install dialog
-        // The UI will handle showing the dialog and calling install()
-        return false;
+        authentication_completed(true, null);
     }
 
     /**
      * Run a prompt through gemini-cli and return the response.
      */
     public async string run_prompt(string prompt) throws Error {
-        string? gemini = find_gemini_cli();
-        if (gemini == null) {
+        if (!is_installed()) {
             throw new IOError.NOT_FOUND(
-                "gemini-cli is not installed. Please install it first."
+                "Gemini CLI is not installed. Please reinstall geary-gemini."
             );
         }
 
         var subprocess = new Subprocess(
             SubprocessFlags.STDIN_PIPE | SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE,
-            gemini, "-p", prompt
+            NODE_BINARY, GEMINI_BINARY, "-p", prompt
         );
 
         string? stdout_buf = null;
@@ -201,6 +118,11 @@ public class Gemini.Service : GLib.Object {
         yield subprocess.communicate_utf8_async(null, null, out stdout_buf, out stderr_buf);
 
         if (!subprocess.get_successful()) {
+            // Check if auth error
+            if (stderr_buf != null && "auth" in stderr_buf.down()) {
+                authentication_required();
+                throw new IOError.PERMISSION_DENIED("Please login with Google first");
+            }
             throw new IOError.FAILED(
                 "Gemini CLI error: %s".printf(stderr_buf ?? "unknown error")
             );
@@ -254,9 +176,11 @@ public class Gemini.Service : GLib.Object {
 
     /**
      * Send a chat message and get a response.
+     * Includes system prompt to restrict Gemini's behavior.
      */
     public async string chat(string message) throws Error {
-        return yield run_prompt(message);
+        string full_prompt = "[System Instructions]\n%s\n\n[User Message]\n%s".printf(SYSTEM_PROMPT, message);
+        return yield run_prompt(full_prompt);
     }
 
     /**
