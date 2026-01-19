@@ -568,6 +568,9 @@ public class Composer.Widget : Gtk.EventBox, Geary.BaseInterface {
             on_image_file_dropped
         );
 
+        // Listen for AI generation requests
+        this.editor.ai_generate_requested.connect(on_ai_generate_requested);
+
         // TODO: also listen for account updates to allow adding identities while writing an email
 
         this.from = new Geary.RFC822.MailboxAddresses.single(
@@ -2540,6 +2543,50 @@ public class Composer.Widget : Gtk.EventBox, Geary.BaseInterface {
         this.editor.body.insert_image(
             Components.WebView.INTERNAL_URL_PREFIX + unique_filename
         );
+    }
+
+    /**
+     * Handle AI generation request from the editor.
+     */
+    private void on_ai_generate_requested(string prompt) {
+        this.generate_ai_content.begin(prompt);
+    }
+
+    private async void generate_ai_content(string prompt) {
+        // Get the Gemini service from the application
+        Application.Client? app = null;
+        if (this.container != null) {
+            app = this.container.top_window.application as Application.Client;
+        }
+
+        if (app == null || app.gemini_service == null) {
+            warning("Could not access Gemini service");
+            return;
+        }
+
+        var gemini = app.gemini_service;
+
+        try {
+            // Generate email draft based on the prompt
+            // Context could be added in the future if the composer stores the original email
+            string draft = yield gemini.help_compose(prompt, null);
+
+            // Convert newlines to HTML breaks and insert into editor
+            string html_content = draft.replace("\n", "<br>");
+            this.editor.body.insert_html(html_content);
+        } catch (Error e) {
+            warning("AI composition failed: %s", e.message);
+            // Show error to user via the main window if possible
+            if (this.container != null) {
+                var main = this.container.top_window as Application.MainWindow;
+                if (main != null) {
+                    var notification = new Components.InAppNotification(
+                        _("AI writing failed: %s").printf(e.message)
+                    );
+                    main.add_notification(notification);
+                }
+            }
+        }
     }
 
 }

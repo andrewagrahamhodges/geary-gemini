@@ -428,7 +428,6 @@ public class Application.MainWindow :
     [GtkChild] private unowned Gtk.Separator gemini_separator;
     [GtkChild] private unowned Gtk.Box gemini_sidebar_container;
 
-    private Gemini.Service gemini_service;
     private Gemini.Sidebar? gemini_sidebar = null;
     private Components.ConversationActions[] folder_conversation_actions = {};
 
@@ -621,9 +620,6 @@ public class Application.MainWindow :
         update_conversation_actions(NONE);
 
         this.attachments = new AttachmentManager(this);
-
-        // Initialize Gemini service
-        this.gemini_service = new Gemini.Service();
 
         this.update_ui_timeout = new Geary.TimeoutManager.seconds(
             UPDATE_UI_INTERVAL, on_update_ui_timeout
@@ -2465,25 +2461,30 @@ public class Application.MainWindow :
     }
 
     private async void translate_current_conversation() {
-        var dominated = this.conversation_list_view.get_selected_conversations();
-        if (dominated.is_empty) {
-            error_bell();
+        string? email_text = get_displayed_email_text();
+        if (email_text == null) {
+            var notification = new Components.InAppNotification(
+                _("No email content to translate")
+            );
+            add_notification(notification);
             return;
         }
 
-        // Get the email content from the conversation viewer
-        var viewer = this.conversation_viewer;
-        if (viewer == null) {
-            error_bell();
-            return;
-        }
+        // Show loading notification
+        var loading = new Components.InAppNotification(_("Translating..."));
+        add_notification(loading);
 
-        // TODO: Get email body text, translate via Gemini.Service, display result
-        // For now, show a placeholder notification
-        var notification = new Components.InAppNotification(
-            _("Translation feature coming soon")
-        );
-        add_notification(notification);
+        try {
+            string translated = yield this.application.gemini_service.translate_to_system_language(email_text);
+            loading.close();
+            show_ai_result_dialog(_("Translation"), translated);
+        } catch (Error e) {
+            loading.close();
+            var error_notification = new Components.InAppNotification(
+                _("Translation failed: %s").printf(e.message)
+            );
+            add_notification(error_notification);
+        }
     }
 
     private void on_summarize_conversation() {
@@ -2491,31 +2492,138 @@ public class Application.MainWindow :
     }
 
     private async void summarize_current_conversation() {
-        var dominated = this.conversation_list_view.get_selected_conversations();
-        if (dominated.is_empty) {
-            error_bell();
+        string? email_text = get_displayed_email_text();
+        if (email_text == null) {
+            var notification = new Components.InAppNotification(
+                _("No email content to summarize")
+            );
+            add_notification(notification);
             return;
         }
 
-        // Get the email content from the conversation viewer
-        var viewer = this.conversation_viewer;
-        if (viewer == null) {
-            error_bell();
-            return;
+        // Show loading notification
+        var loading = new Components.InAppNotification(_("Summarizing..."));
+        add_notification(loading);
+
+        try {
+            string summary = yield this.application.gemini_service.summarize(email_text);
+            loading.close();
+            show_ai_result_dialog(_("Summary"), summary);
+        } catch (Error e) {
+            loading.close();
+            var error_notification = new Components.InAppNotification(
+                _("Summarize failed: %s").printf(e.message)
+            );
+            add_notification(error_notification);
+        }
+    }
+
+    /**
+     * Gets the currently displayed email's body text for AI processing.
+     * Returns null if no email is displayed or body is not loaded.
+     */
+    private string? get_displayed_email_text() {
+        if (this.conversation_viewer == null) {
+            return null;
         }
 
-        // TODO: Get email body text, summarize via Gemini.Service, display result
-        // For now, show a placeholder notification
-        var notification = new Components.InAppNotification(
-            _("Summarize feature coming soon")
+        var list = this.conversation_viewer.current_list;
+        if (list == null) {
+            return null;
+        }
+
+        // Get the email that would be replied to (last expanded or selected)
+        ConversationEmail? email_view = list.get_reply_target();
+        if (email_view == null) {
+            return null;
+        }
+
+        // Check body is loaded
+        if (email_view.message_body_state != ConversationEmail.LoadState.COMPLETED) {
+            return null;
+        }
+
+        Geary.Email email = email_view.email;
+
+        // Build context with headers
+        string subject = email.subject != null ? email.subject.to_string() : "";
+        string from = email.from != null ? email.from.to_string() : "";
+
+        string? body = null;
+        try {
+            if (email.fields.fulfills(Geary.Email.REQUIRED_FOR_MESSAGE)) {
+                var message = email.get_message();
+                body = message.get_searchable_body(true);
+            }
+        } catch (Error e) {
+            debug("Failed to get email body: %s", e.message);
+        }
+
+        // Fallback to preview
+        if (body == null || body.strip().length == 0) {
+            body = email.get_preview_as_string();
+        }
+
+        if (body == null || body.strip().length == 0) {
+            return null;
+        }
+
+        return "From: %s\nSubject: %s\n\n%s".printf(from, subject, body);
+    }
+
+    /**
+     * Shows a dialog with AI-generated content (translation or summary).
+     */
+    private void show_ai_result_dialog(string title, string content) {
+        var dialog = new Gtk.Dialog.with_buttons(
+            title,
+            this,
+            Gtk.DialogFlags.MODAL | Gtk.DialogFlags.DESTROY_WITH_PARENT,
+            _("_Close"), Gtk.ResponseType.CLOSE,
+            _("_Copy"), Gtk.ResponseType.ACCEPT
         );
-        add_notification(notification);
+        dialog.set_default_size(500, 400);
+
+        var content_area = dialog.get_content_area();
+        content_area.margin = 12;
+        content_area.spacing = 6;
+
+        var scrolled = new Gtk.ScrolledWindow(null, null);
+        scrolled.hscrollbar_policy = Gtk.PolicyType.NEVER;
+        scrolled.vscrollbar_policy = Gtk.PolicyType.AUTOMATIC;
+        scrolled.vexpand = true;
+
+        var label = new Gtk.Label(content);
+        label.wrap = true;
+        label.wrap_mode = Pango.WrapMode.WORD_CHAR;
+        label.xalign = 0;
+        label.yalign = 0;
+        label.selectable = true;
+        label.margin = 6;
+
+        scrolled.add(label);
+        content_area.pack_start(scrolled, true, true, 0);
+        content_area.show_all();
+
+        dialog.response.connect((response_id) => {
+            if (response_id == Gtk.ResponseType.ACCEPT) {
+                // Copy to clipboard
+                var clipboard = Gtk.Clipboard.get_default(this.get_display());
+                clipboard.set_text(content, -1);
+
+                var notification = new Components.InAppNotification(_("Copied to clipboard"));
+                add_notification(notification);
+            }
+            dialog.destroy();
+        });
+
+        dialog.show();
     }
 
     private void on_toggle_gemini_sidebar() {
         // Create sidebar if it does not exist
         if (this.gemini_sidebar == null) {
-            this.gemini_sidebar = new Gemini.Sidebar(this.gemini_service);
+            this.gemini_sidebar = new Gemini.Sidebar(this.application.gemini_service);
             this.gemini_sidebar_container.pack_start(this.gemini_sidebar, true, true, 0);
             this.gemini_sidebar.show();
         }

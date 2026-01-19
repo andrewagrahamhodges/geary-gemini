@@ -211,7 +211,7 @@ docker compose run --rm clean    # Clear build cache
 
 ### Current Blockers
 
-*None - all Gemini UI features implemented and build working!*
+*None - Translate, Summarize, and Composer AI buttons fully functional!*
 
 ### Recent Accomplishments
 
@@ -246,14 +246,19 @@ docker compose run --rm clean    # Clear build cache
     - Toggle action creates sidebar on-demand and shows/hides it
 14. [x] Updated meson.build and gresource.xml with new files
 15. [x] Verified build succeeds and .deb package creation works
+16. [x] **Wired Translate button to GeminiService** - Extracts email text and calls translate_to_system_language()
+17. [x] **Wired Summarize button to GeminiService** - Extracts email text and calls summarize()
+18. [x] **Added AI result dialog** - Modal dialog with scrollable text and Copy to Clipboard button
+19. [x] **Wired Composer AI Helper** - Connected editor signal to GeminiService.help_compose(), inserts result as HTML
+20. [x] **Moved GeminiService to Application.Client** - App-wide singleton for all components to access
 
 ### Next Steps
 
-1. [ ] Wire up GeminiService to actual button handlers (currently show placeholder notifications)
+1. [ ] Build MCP server for chat sidebar email access (search, read, label, archive, delete, star)
 2. [ ] Add gemini-cli auto-install dialog UI (modal dialog for first-time install)
-3. [ ] Test full translate/summarize flow with gemini-cli installed
-4. [ ] Add keyboard shortcut for Gemini sidebar toggle
-5. [ ] Consider adding Gemini suggestions in email search
+3. [ ] Add keyboard shortcut for Gemini sidebar toggle
+4. [ ] Consider adding Gemini suggestions in email search
+5. [ ] Add email context to Composer AI Helper when replying (currently passes null)
 
 ### Session Notes
 
@@ -270,16 +275,19 @@ docker compose run --rm clean    # Clear build cache
 - Sidebar container: `ui/application-main-window.ui` (GtkRevealer wrapping GtkBox)
 - Actions: `win.translate-conversation`, `win.summarize-conversation`, `win.toggle-gemini-sidebar`, `edt.ai-help`
 
-**New Files Created This Session:**
+**Email Text Extraction (for AI features):**
+- Path: `ConversationViewer` → `current_list` → `get_reply_target()` → `email` → `get_message()` → `get_searchable_body(true)`
+- Fallback: `email.get_preview_as_string()` if body not loaded
+- Helper method: `MainWindow.get_displayed_email_text()` returns formatted text with From/Subject headers
+
+**Files Created in Previous Sessions:**
 - `src/client/gemini/gemini-sidebar.vala` - Chat sidebar widget class
 - `ui/gemini-sidebar.ui` - Sidebar UI definition with header, chat area, input, status
 
-**Files Modified This Session:**
-- `ui/application-main-window.ui` - Added root_box wrapper with sidebar revealer
-- `ui/components-headerbar-conversation.ui` - Added Gemini toggle button
-- `src/client/application/application-main-window.vala` - Added sidebar GtkChild refs, service init, toggle handler
-- `src/client/meson.build` - Added gemini-sidebar.vala
-- `ui/org.gnome.Geary.gresource.xml` - Added gemini-sidebar.ui
+**Files Modified This Session (2026-01-19):**
+- `src/client/application/application-client.vala` - Added app-wide `gemini_service` property
+- `src/client/application/application-main-window.vala` - Added `get_displayed_email_text()`, wired translate/summarize handlers, added `show_ai_result_dialog()`
+- `src/client/composer/composer-widget.vala` - Connected `ai_generate_requested` signal to `generate_ai_content()` handler
 
 ### Mental Context / Gotchas
 
@@ -303,6 +311,9 @@ docker compose run --rm clean    # Clear build cache
 - GtkRevealer.reveal_child controls visibility with animation
 - Async methods in Vala use `.begin()` to start and yield for await
 - Signals declared with `public signal void name()` pattern
+- `Components.InAppNotification` uses `.close()` to dismiss (not `remove_notification()`)
+- ComposerWidget has no `referred` property - email context passed to `load_context()` is not stored as a field
+- Access app-wide services via: `this.container.top_window.application as Application.Client`
 
 **Dockerfile Key Packages:**
 ```
@@ -311,7 +322,7 @@ pip: meson>=1.7,<1.10
 ```
 
 ---
-*Last updated: 2026-01-18*
+*Last updated: 2026-01-19*
 
 ## Instructions for user
 ***The "Let's Pick This Up Again" Prompt***
