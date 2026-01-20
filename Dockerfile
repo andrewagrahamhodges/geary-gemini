@@ -83,8 +83,8 @@ RUN mkdir -p /src /build /output && chown -R builder:builder /src /build /output
 # Set working directory
 WORKDIR /src
 
-# Copy source code
-COPY --chown=builder:builder . /src/
+# Source is mounted at runtime via docker-compose volume, not copied
+# This ensures fresh source code every build with no Docker layer caching
 
 USER builder
 

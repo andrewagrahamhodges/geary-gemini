@@ -150,6 +150,13 @@ public class Application.Client : Gtk.Application {
     }
 
     /**
+     * The D-Bus service for email tools (MCP integration).
+     */
+    public Gemini.DBusService email_tools_service {
+        get; private set; default = null;
+    }
+
+    /**
      * The user's desktop settings for the application.
      *
      * This will be null until {@link startup} has been called, and
@@ -364,6 +371,13 @@ public class Application.Client : Gtk.Application {
         this.autostart = new StartupManager(this);
         this.gemini_service = new Gemini.Service();
 
+        // Configure MCP server for email tools
+        this.gemini_service.configure_mcp_server();
+
+        // Initialize D-Bus service for email tools (MCP integration)
+        this.email_tools_service = new Gemini.DBusService();
+        this.email_tools_service.register();
+
         // Ensure all geary windows have an icon
         Gtk.Window.set_default_icon_name(Config.APP_ID);
 
@@ -454,6 +468,12 @@ public class Application.Client : Gtk.Application {
             }
         }
 
+        // Unregister D-Bus service
+        if (this.email_tools_service != null) {
+            this.email_tools_service.unregister();
+            this.email_tools_service = null;
+        }
+
         this.engine = null;
         this.config = null;
         this.autostart = null;
@@ -541,7 +561,7 @@ public class Application.Client : Gtk.Application {
         yield this.present();
 
         // Build timestamp for debugging
-        string build_time = "Build: 2026-01-18 22:58 UTC";
+        string build_time = "Build: %s".printf(Config.BUILD_TIME);
         string full_comments = "%s\n\n%s".printf(DESCRIPTION, build_time);
 
         Gtk.show_about_dialog(get_active_window(),
@@ -921,6 +941,9 @@ public class Application.Client : Gtk.Application {
         MainWindow window = new MainWindow(this);
         this.controller.register_window(window);
         window.focus_in_event.connect(on_main_window_focus_in);
+
+        // Set this window as the target for email tools D-Bus service
+        this.email_tools_service.set_main_window(window);
         if (select_first_inbox) {
             if (!window.select_first_inbox(true)) {
                 // The first inbox wasn't selected, so the account is

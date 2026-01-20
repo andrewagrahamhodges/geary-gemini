@@ -26,19 +26,19 @@ Build Geary-Gemini without installing any local dependencies:
 
 ```bash
 # Build the application
-docker-compose run --rm build
+docker compose run --rm build
 
 # Run tests
-docker-compose run --rm test
+docker compose run --rm test
 
 # Create .deb package (output in ./dist/)
-docker-compose run --rm package
+docker compose run --rm package
 
 # Interactive shell for debugging
-docker-compose run --rm shell
+docker compose run --rm shell
 
 # Clean build cache
-docker-compose run --rm clean
+docker compose run --rm clean
 ```
 
 ### Local Build
@@ -207,7 +207,37 @@ docker compose run --rm clean    # Clear build cache
 - Fully containerized build (Ubuntu 25.10 base for development)
 - Docker Compose orchestrates build environment
 - Outputs `.deb` package for installation
-- Install with: `sudo apt install --reinstall /tmp/geary-gemini_46.0_amd64.deb`
+
+**Installation - Kill Geary Properly:**
+
+Geary runs background processes and may auto-restart. To fully kill it before installing:
+
+```bash
+# 1. Disable any autostart
+systemctl --user stop geary.service 2>/dev/null
+systemctl --user disable geary.service 2>/dev/null
+
+# 2. Kill ALL Geary processes (including background workers)
+pkill -9 -f geary
+killall -9 geary 2>/dev/null
+
+# 3. Wait and verify it's dead
+sleep 2
+pgrep -f geary && echo "STILL RUNNING - try logging out and back in" || echo "Geary is dead"
+
+# 4. Install the new version
+sudo apt install --reinstall ./dist/geary-gemini_46.0_amd64.deb
+
+# 5. Start fresh
+geary &
+```
+
+**Nuclear option** - if it still won't die:
+```bash
+# Log out of GNOME session completely, then log back in
+# OR reboot
+sudo reboot
+```
 
 ### Current Blockers
 
@@ -251,11 +281,39 @@ docker compose run --rm clean    # Clear build cache
 18. [x] **Added AI result dialog** - Modal dialog with scrollable text and Copy to Clipboard button
 19. [x] **Wired Composer AI Helper** - Connected editor signal to GeminiService.help_compose(), inserts result as HTML
 20. [x] **Moved GeminiService to Application.Client** - App-wide singleton for all components to access
+21. [x] **Created MCP Server for email tools** (`mcp-server/`)
+    - Node.js MCP server implementing Model Context Protocol
+    - Communicates with Geary via D-Bus
+    - Tools: `list_emails`, `get_selected_email`, `read_email`, `search_emails`, `select_email`
+    - Allows gemini-cli to access and interact with emails
+22. [x] **Created D-Bus service for email operations** (`src/client/gemini/gemini-dbus-service.vala`)
+    - Exposes `org.gnome.Geary.EmailTools` interface on session bus
+    - Methods: ListEmails, GetSelectedEmail, ReadEmail, SearchEmails, SelectEmail
+    - JSON-based API for MCP server communication
+23. [x] **Integrated D-Bus service into application**
+    - Added `email_tools_service` property to `Application.Client`
+    - Service registered on startup, unregistered on shutdown
+    - Main window reference passed for email access
+24. [x] **Added MCP server auto-configuration**
+    - `GeminiService.configure_mcp_server()` writes `~/.gemini/settings.json`
+    - Configures `geary` MCP server pointing to bundled Node.js and server.js
+    - Called on application startup
+25. [x] **Added streaming output support to GeminiService**
+    - New `StreamingCallback` delegate for real-time output
+    - `chat_streaming()` method with line-by-line callback
+    - Sidebar shows live output during AI processing
+26. [x] **Enhanced sidebar with streaming and result display**
+    - `update_streaming_output()` shows live AI responses in loading label
+    - `show_ai_result()` for displaying translate/summarize results in sidebar
+    - `start_loading()`, `update_loading()`, `stop_loading()` helper methods
+27. [x] **Added dynamic build timestamp**
+    - `Config.BUILD_TIME` generated at build time via Python
+    - Displayed in About dialog for debugging
 
 ### Next Steps
 
-1. [ ] Build MCP server for chat sidebar email access (search, read, label, archive, delete, star)
-2. [ ] Add gemini-cli auto-install dialog UI (modal dialog for first-time install)
+1. [ ] Add email action tools to MCP server (archive, delete, star, label)
+2. [ ] Test MCP integration end-to-end with gemini-cli
 3. [ ] Add keyboard shortcut for Gemini sidebar toggle
 4. [ ] Consider adding Gemini suggestions in email search
 5. [ ] Add email context to Composer AI Helper when replying (currently passes null)
@@ -289,6 +347,19 @@ docker compose run --rm clean    # Clear build cache
 - `src/client/application/application-main-window.vala` - Added `get_displayed_email_text()`, wired translate/summarize handlers, added `show_ai_result_dialog()`
 - `src/client/composer/composer-widget.vala` - Connected `ai_generate_requested` signal to `generate_ai_content()` handler
 
+**Files Created/Modified (2026-01-20) - MCP Integration:**
+- `mcp-server/package.json` - Node.js MCP server package definition
+- `mcp-server/server.js` - MCP server implementing email tools via D-Bus
+- `src/client/gemini/gemini-dbus-service.vala` - D-Bus service exposing email operations
+- `src/client/application/application-client.vala` - Added `email_tools_service`, D-Bus registration, MCP auto-config
+- `src/client/gemini/gemini-service.vala` - Added `configure_mcp_server()`, streaming support, updated system prompt
+- `src/client/gemini/gemini-sidebar.vala` - Added streaming output display, `show_ai_result()` method
+- `src/client/meson.build` - Added gemini-dbus-service.vala to build
+- `src/meson.build` - Added BUILD_TIME config variable
+- `bindings/vapi/config.vapi` - Added BUILD_TIME declaration
+- `docker-compose.yml` - Simplified to single build service, added MCP server bundling
+- `ui/gemini-sidebar.ui` - Added loading_label widget for streaming output
+
 ### Mental Context / Gotchas
 
 **Build System Gotchas:**
@@ -315,6 +386,14 @@ docker compose run --rm clean    # Clear build cache
 - ComposerWidget has no `referred` property - email context passed to `load_context()` is not stored as a field
 - Access app-wide services via: `this.container.top_window.application as Application.Client`
 
+**MCP Integration Gotchas:**
+- D-Bus method names are PascalCase (e.g., `ListEmails`) but Vala uses snake_case (`list_emails`)
+- MCP server communicates via JSON-RPC over stdio with gemini-cli
+- D-Bus service must be registered BEFORE main window is created (or set_main_window called after)
+- gemini-cli MCP config lives in `~/.gemini/settings.json` - auto-configured on app startup
+- MCP server path in .deb: `/usr/share/geary-gemini/mcp-server/server.js`
+- Node.js path in .deb: `/usr/share/geary-gemini/node/bin/node`
+
 **Dockerfile Key Packages:**
 ```
 libgcr-4-dev, libgck-2-dev, libpeas-2-dev, gir1.2-peas-2
@@ -322,7 +401,7 @@ pip: meson>=1.7,<1.10
 ```
 
 ---
-*Last updated: 2026-01-19*
+*Last updated: 2026-01-20*
 
 ## Instructions for user
 ***The "Let's Pick This Up Again" Prompt***

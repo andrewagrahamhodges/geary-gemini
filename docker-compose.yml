@@ -1,14 +1,13 @@
-# Geary-Gemini Build Orchestration
+# Geary-Gemini Build System
 #
-# Commands:
-#   docker compose run --rm build      - Configure and build Geary
-#   docker compose run --rm test       - Run unit tests
-#   docker compose run --rm package    - Build .deb package
-#   docker compose run --rm shell      - Interactive shell for debugging
-#   docker compose run --rm clean      - Clean build artifacts
+# Usage:
+#   docker compose build --no-cache && docker compose up
+#   OR just: docker compose up --build (uses layer cache for deps, rebuilds source)
 #
 # Output:
-#   Packages are placed in ./dist/
+#   ./dist/geary-gemini_*.deb
+#
+# Tests must pass or it fails.
 
 services:
   build:
@@ -17,80 +16,78 @@ services:
       dockerfile: Dockerfile
     volumes:
       - .:/src:ro
-      - build-cache:/build
       - ./dist:/output
     working_dir: /src
     command:
       - bash
+      - -ex
       - -c
       - |
-        echo '=== Configuring Geary with Meson ===' &&
-        meson setup /build/meson --prefix=/usr --buildtype=release -Dprofile=release &&
-        echo '=== Building with Ninja ===' &&
-        ninja -C /build/meson &&
-        echo '=== Build complete ===' &&
-        echo 'Run: docker compose run --rm test    - to run tests' &&
-        echo 'Run: docker compose run --rm package - to create .deb'
+        BUILD_DIR=/tmp/build
+        STAGING=/tmp/staging
+        rm -rf $$BUILD_DIR $$STAGING /output/*.deb
+        mkdir -p $$BUILD_DIR
 
-  test:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    volumes:
-      - .:/src:ro
-      - build-cache:/build
-      - ./dist:/output
-    working_dir: /src
-    command:
-      - bash
-      - -c
-      - |
-        echo '=== Running Geary Tests ===' &&
-        if [ ! -d /build/meson ]; then
-          echo 'Build not found. Running build first...' &&
-          meson setup /build/meson --prefix=/usr --buildtype=release &&
-          ninja -C /build/meson
-        fi &&
-        meson test -C /build/meson --verbose
+        echo "=========================================="
+        echo "CONFIGURE"
+        echo "=========================================="
+        meson setup $$BUILD_DIR --prefix=/usr --buildtype=release -Dprofile=release
 
-  package:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    volumes:
-      - .:/src:ro
-      - build-cache:/build
-      - ./dist:/output
-    working_dir: /src
-    command: ["bash", "/src/build-aux/make-deb.sh"]
+        echo "=========================================="
+        echo "BUILD"
+        echo "=========================================="
+        ninja -C $$BUILD_DIR
 
-  shell:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    volumes:
-      - .:/src
-      - build-cache:/build
-      - ./dist:/output
-    working_dir: /src
-    stdin_open: true
-    tty: true
-    command: bash
+        echo "=========================================="
+        echo "TEST (non-GUI)"
+        echo "=========================================="
+        meson test -C $$BUILD_DIR --no-rebuild --print-errorlogs \
+          --suite geary:engine-tests \
+          --suite geary:mail-merge-test \
+          --suite vala-unit:tests
 
-  clean:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    volumes:
-      - build-cache:/build
-    command:
-      - bash
-      - -c
-      - |
-        echo '=== Cleaning build artifacts ===' &&
-        rm -rf /build/* &&
-        echo 'Build cache cleared.'
+        echo "=========================================="
+        echo "PACKAGE"
+        echo "=========================================="
+        DESTDIR=$$STAGING meson install -C $$BUILD_DIR
 
-volumes:
-  build-cache:
-    name: geary-gemini-build-cache
+        echo "Bundling Node.js and gemini-cli..."
+        NODE_VERSION="v22.12.0"
+        GEMINI_DIR="$$STAGING/usr/share/geary-gemini"
+        mkdir -p "$$GEMINI_DIR/node"
+        curl -fsSL "https://nodejs.org/dist/$${NODE_VERSION}/node-$${NODE_VERSION}-linux-x64.tar.xz" \
+          | tar -xJ -C "$$GEMINI_DIR/node" --strip-components=1
+        export PATH="$$GEMINI_DIR/node/bin:$$PATH"
+        npm install --prefix "$$GEMINI_DIR" @google/gemini-cli
+        rm -rf "$$GEMINI_DIR/node/share" "$$GEMINI_DIR/node/include"
+
+        echo "Installing MCP server for email tools..."
+        mkdir -p "$$GEMINI_DIR/mcp-server"
+        cp /src/mcp-server/package.json "$$GEMINI_DIR/mcp-server/"
+        cp /src/mcp-server/server.js "$$GEMINI_DIR/mcp-server/"
+        npm install --prefix "$$GEMINI_DIR/mcp-server" --omit=dev
+
+        VERSION=$$(grep -m1 "version:" /src/meson.build | cut -d"'" -f2)
+        mkdir -p $$STAGING/DEBIAN
+        cat > $$STAGING/DEBIAN/control << EOF
+        Package: geary-gemini
+        Version: $${VERSION}
+        Section: mail
+        Priority: optional
+        Architecture: amd64
+        Depends: libgtk-3-0t64, libwebkit2gtk-4.1-0, libgee-0.8-2, libgmime-3.0-0t64, libsqlite3-0, libsecret-1-0, libhandy-1-0, libfolks26, libgoa-1.0-0b, libgspell-1-3, libgsound0t64, libpeas-2-0, libenchant-2-2, libytnef0
+        Maintainer: Andrew Hodges <andrew@hodges.id.au>
+        Description: Geary email client with Gemini AI integration
+         Geary is a modern email client for GNOME, enhanced with
+         Gemini AI capabilities for translation, summarization,
+         and natural language email management.
+        EOF
+        sed -i 's/^        //' $$STAGING/DEBIAN/control
+
+        dpkg-deb --build $$STAGING /output/geary-gemini_$${VERSION}_amd64.deb
+        chmod 644 /output/geary-gemini_$${VERSION}_amd64.deb
+
+        echo "=========================================="
+        echo "DONE"
+        echo "=========================================="
+        ls -lh /output/*.deb

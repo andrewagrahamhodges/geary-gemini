@@ -17,6 +17,11 @@ conf.set_quoted('REVNO', revno)
 conf.set_quoted('SOURCE_ROOT_DIR', meson.project_source_root())
 conf.set_quoted('VERSION', geary_version)
 conf.set_quoted('WEB_EXTENSIONS_DIR', web_extensions_dir)
+
+# Build timestamp - generated fresh each build
+build_time_cmd = run_command('python3', '-c', 'import datetime; print(datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))', check: true)
+conf.set_quoted('BUILD_TIME', build_time_cmd.stdout().strip())
+
 config_h = configure_file(output: 'config.h', configuration: conf)
 
 config_dep = declare_dependency(

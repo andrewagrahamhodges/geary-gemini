@@ -2470,16 +2470,26 @@ public class Application.MainWindow :
             return;
         }
 
-        // Show loading notification
-        var loading = new Components.InAppNotification(_("Translating..."));
-        add_notification(loading);
+        // Ensure sidebar is created and visible
+        ensure_gemini_sidebar_visible();
+
+        // Start loading in sidebar
+        this.gemini_sidebar.start_loading(_("Translating..."));
 
         try {
-            string translated = yield this.application.gemini_service.translate_to_system_language(email_text);
-            loading.close();
-            show_ai_result_dialog(_("Translation"), translated);
+            string translated = yield this.application.gemini_service.run_prompt(
+                "Translate the following text to %s. Output ONLY the translation, nothing else:\n\n%s".printf(
+                    this.application.gemini_service.get_system_language_name(),
+                    email_text
+                ),
+                (line) => {
+                    this.gemini_sidebar.update_loading(line);
+                }
+            );
+            this.gemini_sidebar.stop_loading();
+            this.gemini_sidebar.show_ai_result(_("Translation"), translated.strip());
         } catch (Error e) {
-            loading.close();
+            this.gemini_sidebar.stop_loading();
             var error_notification = new Components.InAppNotification(
                 _("Translation failed: %s").printf(e.message)
             );
@@ -2501,21 +2511,43 @@ public class Application.MainWindow :
             return;
         }
 
-        // Show loading notification
-        var loading = new Components.InAppNotification(_("Summarizing..."));
-        add_notification(loading);
+        // Ensure sidebar is created and visible
+        ensure_gemini_sidebar_visible();
+
+        // Start loading in sidebar
+        this.gemini_sidebar.start_loading(_("Summarizing..."));
 
         try {
-            string summary = yield this.application.gemini_service.summarize(email_text);
-            loading.close();
-            show_ai_result_dialog(_("Summary"), summary);
+            string summary = yield this.application.gemini_service.run_prompt(
+                "Summarize the following email concisely. Keep the key points and action items:\n\n%s".printf(email_text),
+                (line) => {
+                    this.gemini_sidebar.update_loading(line);
+                }
+            );
+            this.gemini_sidebar.stop_loading();
+            this.gemini_sidebar.show_ai_result(_("Summary"), summary.strip());
         } catch (Error e) {
-            loading.close();
+            this.gemini_sidebar.stop_loading();
             var error_notification = new Components.InAppNotification(
                 _("Summarize failed: %s").printf(e.message)
             );
             add_notification(error_notification);
         }
+    }
+
+    /**
+     * Ensure the Gemini sidebar is created and visible.
+     */
+    private void ensure_gemini_sidebar_visible() {
+        // Create sidebar if it does not exist
+        if (this.gemini_sidebar == null) {
+            this.gemini_sidebar = new Gemini.Sidebar(this.application.gemini_service);
+            this.gemini_sidebar_container.pack_start(this.gemini_sidebar, true, true, 0);
+            this.gemini_sidebar.show();
+        }
+
+        // Make it visible
+        set_gemini_sidebar_visible(true);
     }
 
     /**
@@ -2571,66 +2603,14 @@ public class Application.MainWindow :
         return "From: %s\nSubject: %s\n\n%s".printf(from, subject, body);
     }
 
-    /**
-     * Shows a dialog with AI-generated content (translation or summary).
-     */
-    private void show_ai_result_dialog(string title, string content) {
-        var dialog = new Gtk.Dialog.with_buttons(
-            title,
-            this,
-            Gtk.DialogFlags.MODAL | Gtk.DialogFlags.DESTROY_WITH_PARENT,
-            _("_Close"), Gtk.ResponseType.CLOSE,
-            _("_Copy"), Gtk.ResponseType.ACCEPT
-        );
-        dialog.set_default_size(500, 400);
-
-        var content_area = dialog.get_content_area();
-        content_area.margin = 12;
-        content_area.spacing = 6;
-
-        var scrolled = new Gtk.ScrolledWindow(null, null);
-        scrolled.hscrollbar_policy = Gtk.PolicyType.NEVER;
-        scrolled.vscrollbar_policy = Gtk.PolicyType.AUTOMATIC;
-        scrolled.vexpand = true;
-
-        var label = new Gtk.Label(content);
-        label.wrap = true;
-        label.wrap_mode = Pango.WrapMode.WORD_CHAR;
-        label.xalign = 0;
-        label.yalign = 0;
-        label.selectable = true;
-        label.margin = 6;
-
-        scrolled.add(label);
-        content_area.pack_start(scrolled, true, true, 0);
-        content_area.show_all();
-
-        dialog.response.connect((response_id) => {
-            if (response_id == Gtk.ResponseType.ACCEPT) {
-                // Copy to clipboard
-                var clipboard = Gtk.Clipboard.get_default(this.get_display());
-                clipboard.set_text(content, -1);
-
-                var notification = new Components.InAppNotification(_("Copied to clipboard"));
-                add_notification(notification);
-            }
-            dialog.destroy();
-        });
-
-        dialog.show();
-    }
-
     private void on_toggle_gemini_sidebar() {
-        // Create sidebar if it does not exist
-        if (this.gemini_sidebar == null) {
-            this.gemini_sidebar = new Gemini.Sidebar(this.application.gemini_service);
-            this.gemini_sidebar_container.pack_start(this.gemini_sidebar, true, true, 0);
-            this.gemini_sidebar.show();
-        }
-
         // Toggle visibility
         bool is_visible = this.gemini_sidebar_revealer.reveal_child;
-        set_gemini_sidebar_visible(!is_visible);
+        if (is_visible) {
+            set_gemini_sidebar_visible(false);
+        } else {
+            ensure_gemini_sidebar_visible();
+        }
     }
 
     private void set_gemini_sidebar_visible(bool visible) {

@@ -26,8 +26,10 @@ public class Gemini.Sidebar : Gtk.Bin {
     [GtkChild] private unowned Gtk.Entry message_entry;
     [GtkChild] private unowned Gtk.Button send_button;
     [GtkChild] private unowned Gtk.Revealer loading_revealer;
+    [GtkChild] private unowned Gtk.Label loading_label;
 
     private bool is_processing = false;
+    private Gtk.Label? streaming_content_label = null;
 
     static construct {
         set_css_name("gemini-sidebar");
@@ -138,13 +140,22 @@ public class Gemini.Sidebar : Gtk.Bin {
     private async void send_message(string message) {
         this.is_processing = true;
         this.loading_revealer.reveal_child = true;
+        this.loading_label.label = _("Thinking...");
         this.send_button.sensitive = false;
         this.message_entry.sensitive = false;
 
+        // Create a streaming content label to show live output
+        this.streaming_content_label = null;
+
         try {
-            string response = yield this.service.chat(message);
+            string response = yield this.service.chat_streaming(message, (line) => {
+                update_streaming_output(line);
+            });
+            // Clear streaming label and add final message
+            this.streaming_content_label = null;
             add_message(response.strip(), false);
         } catch (Error e) {
+            this.streaming_content_label = null;
             add_message(_("Error: %s").printf(e.message), false, true);
         }
 
@@ -153,6 +164,20 @@ public class Gemini.Sidebar : Gtk.Bin {
         this.message_entry.sensitive = true;
         on_entry_changed();
         this.message_entry.grab_focus();
+    }
+
+    /**
+     * Update the loading label with streaming output.
+     */
+    private void update_streaming_output(string line) {
+        // Show the line in the loading label, truncating if too long
+        string display_line = line.strip();
+        if (display_line.length > 60) {
+            display_line = display_line.substring(0, 57) + "...";
+        }
+        if (display_line.length > 0) {
+            this.loading_label.label = display_line;
+        }
     }
 
     /**
@@ -221,5 +246,116 @@ public class Gemini.Sidebar : Gtk.Bin {
             }
         }
         this.welcome_label.visible = true;
+    }
+
+    /**
+     * Show an AI result in the sidebar (for translate/summarize).
+     * This adds a labeled result to the chat area.
+     */
+    public void show_ai_result(string title, string content) {
+        // Hide welcome message
+        this.welcome_label.visible = false;
+
+        var result_box = new Gtk.Box(Gtk.Orientation.VERTICAL, 8);
+        result_box.visible = true;
+        result_box.margin_start = 0;
+        result_box.margin_end = 0;
+
+        // Add a styled frame around the result
+        var frame = new Gtk.Frame(null);
+        frame.visible = true;
+        frame.get_style_context().add_class("view");
+
+        var inner_box = new Gtk.Box(Gtk.Orientation.VERTICAL, 6);
+        inner_box.visible = true;
+        inner_box.margin = 12;
+
+        // Title label
+        var title_label = new Gtk.Label(title);
+        title_label.visible = true;
+        title_label.xalign = 0;
+        title_label.get_style_context().add_class("heading");
+        var title_attrs = new Pango.AttrList();
+        title_attrs.insert(Pango.attr_weight_new(Pango.Weight.BOLD));
+        title_label.attributes = title_attrs;
+        inner_box.pack_start(title_label, false, false, 0);
+
+        // Separator
+        var sep = new Gtk.Separator(Gtk.Orientation.HORIZONTAL);
+        sep.visible = true;
+        inner_box.pack_start(sep, false, false, 0);
+
+        // Content label
+        var content_label = new Gtk.Label(content);
+        content_label.visible = true;
+        content_label.wrap = true;
+        content_label.wrap_mode = Pango.WrapMode.WORD_CHAR;
+        content_label.xalign = 0;
+        content_label.selectable = true;
+        inner_box.pack_start(content_label, false, false, 0);
+
+        // Copy button
+        var button_box = new Gtk.Box(Gtk.Orientation.HORIZONTAL, 0);
+        button_box.visible = true;
+        button_box.halign = Gtk.Align.END;
+        button_box.margin_top = 6;
+
+        var copy_button = new Gtk.Button.with_label(_("Copy"));
+        copy_button.visible = true;
+        copy_button.get_style_context().add_class("flat");
+        copy_button.clicked.connect(() => {
+            var clipboard = Gtk.Clipboard.get_default(this.get_display());
+            clipboard.set_text(content, -1);
+            copy_button.label = _("Copied!");
+            GLib.Timeout.add(1500, () => {
+                copy_button.label = _("Copy");
+                return false;
+            });
+        });
+        button_box.pack_end(copy_button, false, false, 0);
+        inner_box.pack_start(button_box, false, false, 0);
+
+        frame.add(inner_box);
+        result_box.pack_start(frame, false, false, 0);
+
+        this.chat_box.pack_start(result_box, false, false, 0);
+
+        // Scroll to bottom
+        scroll_to_bottom();
+    }
+
+    /**
+     * Start showing a loading state with streaming output.
+     * Returns a callback that should be called with each line of output.
+     */
+    public void start_loading(string initial_message) {
+        this.is_processing = true;
+        this.loading_label.label = initial_message;
+        this.loading_revealer.reveal_child = true;
+        this.send_button.sensitive = false;
+        this.message_entry.sensitive = false;
+    }
+
+    /**
+     * Update the loading message with streaming content.
+     */
+    public void update_loading(string message) {
+        string display_msg = message.strip();
+        if (display_msg.length > 60) {
+            display_msg = display_msg.substring(0, 57) + "...";
+        }
+        if (display_msg.length > 0) {
+            this.loading_label.label = display_msg;
+        }
+    }
+
+    /**
+     * Stop the loading state.
+     */
+    public void stop_loading() {
+        this.is_processing = false;
+        this.loading_revealer.reveal_child = false;
+        this.message_entry.sensitive = true;
+        on_entry_changed();
     }
 }

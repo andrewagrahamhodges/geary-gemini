@@ -23,4 +23,5 @@ namespace Config
     public const string SOURCE_ROOT_DIR;
     public const string VERSION;
     public const string WEB_EXTENSIONS_DIR;
+    public const string BUILD_TIME;
 }
