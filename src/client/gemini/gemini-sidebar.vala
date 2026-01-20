@@ -148,11 +148,14 @@ public class Gemini.Sidebar : Gtk.Bin {
         this.streaming_content_label = null;
 
         try {
-            string response = yield this.service.chat_streaming(message, (line) => {
-                update_streaming_output(line);
+            // Use structured streaming - callback receives (type, content)
+            // tool_use/tool_result go to thinking indicator, message content is the response
+            string response = yield this.service.chat_streaming(message, (msg_type, content) => {
+                handle_stream_message(msg_type, content);
             });
             // Clear streaming label and add final message
             this.streaming_content_label = null;
+            // Response already filtered - only contains assistant message content
             add_message(response.strip(), false);
         } catch (Error e) {
             this.streaming_content_label = null;
@@ -167,17 +170,103 @@ public class Gemini.Sidebar : Gtk.Bin {
     }
 
     /**
-     * Update the loading label with streaming output.
+     * Handle structured streaming messages from gemini-cli.
+     * Shows tool use in thinking indicator, ignores message content (already accumulated).
      */
-    private void update_streaming_output(string line) {
-        // Show the line in the loading label, truncating if too long
-        string display_line = line.strip();
-        if (display_line.length > 60) {
-            display_line = display_line.substring(0, 57) + "...";
+    private void handle_stream_message(string msg_type, string content) {
+        switch (msg_type) {
+            case "tool_use":
+                // Show which tool is being used
+                this.loading_label.label = content;  // e.g., "Using get_selected_email..."
+                break;
+
+            case "tool_result":
+                // Brief status update
+                if (content.length > 0) {
+                    this.loading_label.label = content;
+                }
+                break;
+
+            case "message":
+                // Assistant response streaming - show preview in thinking area
+                if (content.length > 0) {
+                    string preview = content.strip();
+                    if (preview.length > 50) {
+                        preview = preview.substring(0, 47) + "...";
+                    }
+                    if (preview.length > 0) {
+                        this.loading_label.label = preview;
+                    }
+                }
+                break;
+
+            default:
+                // Other message types - just show "Processing..."
+                this.loading_label.label = _("Processing...");
+                break;
         }
-        if (display_line.length > 0) {
-            this.loading_label.label = display_line;
+    }
+
+    /**
+     * Convert markdown text to Pango markup for rendering in GTK labels.
+     * Supports: **bold**, *italic*, `code`, ## headers, - lists
+     */
+    private string markdown_to_pango(string markdown) {
+        // First escape any existing markup characters to prevent injection
+        string result = GLib.Markup.escape_text(markdown);
+
+        // Process line by line for headers and lists
+        var lines = result.split("\n");
+        var processed_lines = new GLib.GenericArray<string>();
+
+        foreach (string line in lines) {
+            string processed = line;
+
+            // Headers: ## Header -> large bold text
+            if (processed.has_prefix("## ")) {
+                processed = "<span weight=\"bold\" size=\"large\">" + processed.substring(3) + "</span>";
+            } else if (processed.has_prefix("# ")) {
+                processed = "<span weight=\"bold\" size=\"x-large\">" + processed.substring(2) + "</span>";
+            }
+            // Lists: - item -> bullet point
+            else if (processed.has_prefix("- ")) {
+                processed = "  •  " + processed.substring(2);
+            }
+            // Numbered lists: 1. item -> keep as-is but indent
+            else if (processed.length > 2 && processed[0].isdigit() && processed[1] == '.') {
+                processed = "  " + processed;
+            }
+
+            processed_lines.add(processed);
         }
+
+        result = string.joinv("\n", processed_lines.data);
+
+        // Bold: **text** -> <b>text</b>
+        try {
+            var bold_regex = new Regex("\\*\\*(.+?)\\*\\*");
+            result = bold_regex.replace(result, -1, 0, "<b>\\1</b>");
+        } catch (RegexError e) {
+            // Ignore regex errors
+        }
+
+        // Italic: *text* -> <i>text</i> (but not inside bold)
+        try {
+            var italic_regex = new Regex("(?<!\\*)\\*([^*]+)\\*(?!\\*)");
+            result = italic_regex.replace(result, -1, 0, "<i>\\1</i>");
+        } catch (RegexError e) {
+            // Ignore regex errors
+        }
+
+        // Code: `code` -> <tt>code</tt>
+        try {
+            var code_regex = new Regex("`([^`]+)`");
+            result = code_regex.replace(result, -1, 0, "<tt>\\1</tt>");
+        } catch (RegexError e) {
+            // Ignore regex errors
+        }
+
+        return result;
     }
 
     /**
@@ -203,13 +292,22 @@ public class Gemini.Sidebar : Gtk.Bin {
         sender_label.attributes = attrs;
         message_box.pack_start(sender_label, false, false, 0);
 
-        // Message content
-        var content_label = new Gtk.Label(text);
+        // Message content - use Pango markup for Gemini responses
+        var content_label = new Gtk.Label(null);
         content_label.visible = true;
         content_label.wrap = true;
         content_label.wrap_mode = Pango.WrapMode.WORD_CHAR;
         content_label.xalign = 0;
         content_label.selectable = true;
+
+        if (is_user) {
+            // Plain text for user messages
+            content_label.set_text(text);
+        } else {
+            // Render markdown for AI responses
+            content_label.use_markup = true;
+            content_label.set_markup(markdown_to_pango(text));
+        }
 
         if (is_error) {
             content_label.get_style_context().add_class("error");

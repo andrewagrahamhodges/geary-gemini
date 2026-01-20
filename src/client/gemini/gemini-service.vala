@@ -21,30 +21,37 @@ public class Gemini.Service : GLib.Object {
     private const string GEMINI_BINARY = "/usr/share/geary-gemini/node_modules/.bin/gemini";
     private const string MCP_SERVER_PATH = "/usr/share/geary-gemini/mcp-server/server.js";
 
-    // System prompt for Gemini - describes available email tools
-    private const string SYSTEM_PROMPT = """You are an AI assistant integrated into the Geary email client. Your role is to help users with email-related tasks such as:
-- Reading and understanding emails
-- Translating email content
-- Summarizing emails
-- Searching for specific emails
-- Helping compose and draft emails
-
-You have access to the following email tools:
-- list_emails: List emails in the current folder
-- get_selected_email: Get the currently selected email's full content
-- read_email: Read a specific email by its ID
-- search_emails: Search emails (e.g., "from:bob", "subject:invoice")
-- select_email: Select an email in Geary's UI
-
-When a user asks about "the email", "this email", or "the selected email", use get_selected_email to retrieve it first.
-When asked to translate or summarize an email, first get it with get_selected_email, then process the content.
-When searching, use search_emails with appropriate queries like "from:name" or "subject:topic".
-
-RESTRICTIONS:
-- You can only access emails through the provided tools
-- You cannot access files, run commands, or browse the internet
-- You cannot send emails or modify existing emails
-- Focus only on email-related tasks within Geary""";
+    // System prompt for Gemini chat - provides context and guardrails
+    private const string SYSTEM_PROMPT =
+        "You are an AI assistant integrated into the Geary email client. You help users with their emails.\n\n" +
+        "IMPORTANT DEFAULTS:\n" +
+        "- When asked to translate, ALWAYS translate to %s (the user's system language) unless they specify otherwise\n" +
+        "- When the user says \"the email\", \"this email\", or \"selected email\", use get_selected_email to retrieve it\n" +
+        "- Assume questions are about the currently selected email unless the user asks about other emails\n" +
+        "- When translating or summarizing, get the selected email first, then process it\n\n" +
+        "FORMATTING:\n" +
+        "- Use markdown formatting to make responses clear and readable\n" +
+        "- Use **bold** for emphasis and important terms\n" +
+        "- Use *italic* for titles, names, or subtle emphasis\n" +
+        "- Use `code` for technical terms, email addresses, or IDs\n" +
+        "- Use bullet lists (- item) for multiple points\n" +
+        "- Use ## headers for sections in longer responses\n\n" +
+        "RESPONSE STYLE:\n" +
+        "- Give direct, concise responses\n" +
+        "- Do NOT explain your thought process or what steps you're taking\n" +
+        "- Do NOT say things like \"I will now...\", \"Let me...\", \"First I'll...\"\n" +
+        "- Just provide the result directly (translation, summary, answer, etc.)\n" +
+        "- If you need clarification, ask a brief question\n\n" +
+        "AVAILABLE TOOLS:\n" +
+        "- list_emails: List emails in the current folder\n" +
+        "- get_selected_email: Get the currently selected email\n" +
+        "- read_email: Read a specific email by ID\n" +
+        "- search_emails: Search emails\n" +
+        "- select_email: Select an email in the UI\n\n" +
+        "RESTRICTIONS:\n" +
+        "- You can only access emails through the provided tools\n" +
+        "- You cannot send, delete, or modify emails\n" +
+        "- Focus only on email-related tasks";
 
     /**
      * Signal emitted when authentication is required.
@@ -120,6 +127,17 @@ RESTRICTIONS:
         builder.begin_array();
         builder.add_string_value(MCP_SERVER_PATH);
         builder.end_array();
+        // Pass D-Bus session address to subprocess so MCP server can connect
+        string? dbus_addr = Environment.get_variable("DBUS_SESSION_BUS_ADDRESS");
+        if (dbus_addr != null) {
+            builder.set_member_name("env");
+            builder.begin_object();
+            builder.set_member_name("DBUS_SESSION_BUS_ADDRESS");
+            builder.add_string_value(dbus_addr);
+            builder.end_object();
+        }
+        builder.set_member_name("timeout");
+        builder.add_int_value(10000);  // 10 second timeout
         builder.end_object();
         builder.end_object();
 
@@ -189,6 +207,13 @@ RESTRICTIONS:
     public delegate void StreamingCallback(string line);
 
     /**
+     * Delegate for receiving structured streaming output.
+     * @param msg_type The message type: "tool_use", "tool_result", "message", "thinking", etc.
+     * @param content The content/description for this message
+     */
+    public delegate void StructuredStreamCallback(string msg_type, string content);
+
+    /**
      * Run a prompt through gemini-cli and return the response.
      */
     public async string run_prompt(string prompt, StreamingCallback? on_output = null) throws Error {
@@ -251,6 +276,111 @@ RESTRICTIONS:
     }
 
     /**
+     * Run a prompt with MCP tools enabled and structured JSON streaming.
+     * Returns only the assistant's response text, filtering out tool use/thinking.
+     *
+     * @param prompt The user's message
+     * @param on_stream Callback for streaming updates (type + content)
+     * @return The assistant's final response text
+     */
+    public async string run_mcp_prompt(string prompt, StructuredStreamCallback? on_stream = null) throws Error {
+        if (!is_installed()) {
+            throw new IOError.NOT_FOUND(
+                "Gemini CLI is not installed. Please reinstall geary-gemini."
+            );
+        }
+
+        var subprocess = new Subprocess(
+            SubprocessFlags.STDIN_PIPE | SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE,
+            NODE_BINARY, GEMINI_BINARY,
+            "--output-format", "stream-json",
+            "--allowed-mcp-server-names", "geary",
+            "--yolo",
+            prompt
+        );
+
+        var stdout_stream = new DataInputStream(subprocess.get_stdout_pipe());
+        var response_builder = new StringBuilder();
+
+        try {
+            string? line;
+            while ((line = yield stdout_stream.read_line_async()) != null) {
+                // Skip non-JSON lines (deprecation warnings, status messages)
+                if (!line.has_prefix("{")) {
+                    continue;
+                }
+
+                // Parse the JSON line
+                var parser = new Json.Parser();
+                try {
+                    parser.load_from_data(line);
+                } catch (Error e) {
+                    continue;  // Skip invalid JSON
+                }
+
+                var root = parser.get_root();
+                if (root == null || root.get_node_type() != Json.NodeType.OBJECT) {
+                    continue;
+                }
+
+                var obj = root.get_object();
+                string msg_type = obj.has_member("type") ? obj.get_string_member("type") : "";
+
+                switch (msg_type) {
+                    case "tool_use":
+                        // Show tool being used in thinking indicator
+                        string tool_name = obj.has_member("tool_name") ? obj.get_string_member("tool_name") : "tool";
+                        if (on_stream != null) {
+                            on_stream("tool_use", "Using %s...".printf(tool_name));
+                        }
+                        break;
+
+                    case "tool_result":
+                        // Show tool result status
+                        string status = obj.has_member("status") ? obj.get_string_member("status") : "";
+                        if (on_stream != null) {
+                            on_stream("tool_result", status == "success" ? "Done" : "Error");
+                        }
+                        break;
+
+                    case "message":
+                        // Only capture assistant messages for the final response
+                        string role = obj.has_member("role") ? obj.get_string_member("role") : "";
+                        if (role == "assistant" && obj.has_member("content")) {
+                            string content = obj.get_string_member("content");
+                            response_builder.append(content);
+                            if (on_stream != null) {
+                                on_stream("message", content);
+                            }
+                        }
+                        break;
+
+                    case "result":
+                        // Completion - ignore
+                        break;
+
+                    default:
+                        // Other types - pass through for display
+                        if (on_stream != null && msg_type.length > 0) {
+                            on_stream(msg_type, "");
+                        }
+                        break;
+                }
+            }
+        } catch (Error e) {
+            // Stream ended
+        }
+
+        yield subprocess.wait_async();
+
+        if (!subprocess.get_successful()) {
+            throw new IOError.FAILED("Gemini CLI error");
+        }
+
+        return response_builder.str;
+    }
+
+    /**
      * Translate text to the specified language.
      */
     public async string translate(string text, string target_language) throws Error {
@@ -294,21 +424,31 @@ RESTRICTIONS:
     }
 
     /**
-     * Send a chat message and get a response.
-     * Includes system prompt to restrict Gemini's behavior.
+     * Build the full prompt with system instructions.
      */
-    public async string chat(string message) throws Error {
-        string full_prompt = "[System Instructions]\n%s\n\n[User Message]\n%s".printf(SYSTEM_PROMPT, message);
-        return yield run_prompt(full_prompt);
+    private string build_chat_prompt(string message) {
+        string lang = get_system_language_name();
+        string system = SYSTEM_PROMPT.printf(lang);
+        return "[System Instructions]\n%s\n\n[User Message]\n%s".printf(system, message);
     }
 
     /**
-     * Send a chat message with streaming output callback.
-     * Includes system prompt to restrict Gemini's behavior.
+     * Send a chat message and get a response.
+     * Uses MCP tools to access email data from Geary.
      */
-    public async string chat_streaming(string message, StreamingCallback on_output) throws Error {
-        string full_prompt = "[System Instructions]\n%s\n\n[User Message]\n%s".printf(SYSTEM_PROMPT, message);
-        return yield run_prompt(full_prompt, on_output);
+    public async string chat(string message) throws Error {
+        string full_prompt = build_chat_prompt(message);
+        return yield run_mcp_prompt(full_prompt, null);
+    }
+
+    /**
+     * Send a chat message with structured streaming output.
+     * Uses MCP tools to access email data from Geary.
+     * The callback receives (msg_type, content) where msg_type is "tool_use", "tool_result", or "message".
+     */
+    public async string chat_streaming(string message, StructuredStreamCallback on_stream) throws Error {
+        string full_prompt = build_chat_prompt(message);
+        return yield run_mcp_prompt(full_prompt, on_stream);
     }
 
     /**

@@ -78,58 +78,7 @@
         </style>
       </object>
     </child>
-    <child>
-      <object class="GtkBox" id="gemini_buttons">
-        <property name="visible">True</property>
-        <property name="margin_start">6</property>
-        <child>
-          <object class="GtkButton" id="translate_button">
-            <property name="visible">True</property>
-            <property name="focus_on_click">False</property>
-            <property name="receives_default">False</property>
-            <property name="tooltip_text" translatable="yes">Translate</property>
-            <property name="action_name">win.translate-conversation</property>
-            <property name="always_show_image">True</property>
-            <child>
-              <object class="GtkImage" id="translate_image">
-                <property name="visible">True</property>
-                <property name="icon_name">preferences-desktop-locale-symbolic</property>
-              </object>
-            </child>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-            <property name="position">0</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkButton" id="summarize_button">
-            <property name="visible">True</property>
-            <property name="focus_on_click">False</property>
-            <property name="receives_default">False</property>
-            <property name="tooltip_text" translatable="yes">Summarize</property>
-            <property name="action_name">win.summarize-conversation</property>
-            <property name="always_show_image">True</property>
-            <child>
-              <object class="GtkImage" id="summarize_image">
-                <property name="visible">True</property>
-                <property name="icon_name">view-list-symbolic</property>
-              </object>
-            </child>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-            <property name="position">1</property>
-          </packing>
-        </child>
-        <style>
-          <class name="raised"/>
-          <class name="linked"/>
-        </style>
-      </object>
-    </child>
+
     <child>
       <object class="GtkImage" id="archive_image">
         <property name="visible">True</property>

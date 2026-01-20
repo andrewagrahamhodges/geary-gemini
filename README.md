@@ -309,6 +309,29 @@ sudo reboot
 27. [x] **Added dynamic build timestamp**
     - `Config.BUILD_TIME` generated at build time via Python
     - Displayed in About dialog for debugging
+28. [x] **Fixed MCP server notifications/initialized handler**
+    - gemini-cli sends `notifications/initialized` not just `initialized`
+    - Added D-Bus environment variable to MCP subprocess config
+29. [x] **Added system prompt with guardrails**
+    - Default response language matches system locale
+    - Assumes selected email context when not specified
+    - Instructs Gemini on appropriate email assistant behavior
+30. [x] **Added structured JSON streaming support**
+    - `--output-format stream-json` for type-based message filtering
+    - Separates "thinking" (tool_use/tool_result) from final response (message)
+    - Thinking shown in loading indicator, not in final output
+31. [x] **Removed translate/summarize buttons from conversation actions**
+    - Chat sidebar provides better UX for these functions
+    - Cleaner toolbar appearance
+32. [x] **Added markdown rendering support for chat messages**
+    - Updated system prompt to tell Gemini to use markdown
+    - `markdown_to_pango()` converter handles bold, italic, code, headers, lists
+    - AI responses rendered with Pango markup formatting
+33. [x] **Made sidebar resizable with GtkPaned**
+    - Replaced GtkBox with GtkPaned in `application-main-window.ui`
+    - Wide handle for easy drag resizing
+    - Minimum sidebar width of 280px (shrink=False)
+    - Removed redundant `gemini_separator` widget
 
 ### Next Steps
 
@@ -325,13 +348,14 @@ sudo reboot
 - Run prompts with: `gemini -p "your prompt here"`
 - Auth via: `gemini auth login` (opens browser for OAuth)
 - App stores local install in `~/.local/share/geary-gemini/node_modules/`
+- Structured output: `gemini --output-format stream-json` for type-based message filtering
 
 **UI Implementation Details:**
-- Translate/Summarize buttons: `ui/components-conversation-actions.ui` lines 81-132
 - Composer AI helper: `ui/composer-editor.ui` (GtkRevealer with prompt bar)
 - Gemini sidebar toggle: `ui/components-headerbar-conversation.ui` (GtkToggleButton)
-- Sidebar container: `ui/application-main-window.ui` (GtkRevealer wrapping GtkBox)
-- Actions: `win.translate-conversation`, `win.summarize-conversation`, `win.toggle-gemini-sidebar`, `edt.ai-help`
+- Sidebar container: `ui/application-main-window.ui` (GtkPaned with GtkRevealer)
+- Actions: `win.toggle-gemini-sidebar`, `edt.ai-help`
+- Translate/Summarize buttons removed - sidebar provides better UX
 
 **Email Text Extraction (for AI features):**
 - Path: `ConversationViewer` → `current_list` → `get_reply_target()` → `email` → `get_message()` → `get_searchable_body(true)`
@@ -359,6 +383,14 @@ sudo reboot
 - `bindings/vapi/config.vapi` - Added BUILD_TIME declaration
 - `docker-compose.yml` - Simplified to single build service, added MCP server bundling
 - `ui/gemini-sidebar.ui` - Added loading_label widget for streaming output
+
+**Files Modified (2026-01-21) - UI Improvements:**
+- `mcp-server/server.js` - Fixed `notifications/initialized` handler for gemini-cli compatibility
+- `src/client/gemini/gemini-service.vala` - Added D-Bus env to MCP config, stream-json output, system prompt with markdown
+- `src/client/gemini/gemini-sidebar.vala` - Added `markdown_to_pango()` converter, structured JSON stream handling
+- `src/client/application/application-main-window.vala` - Removed `gemini_separator` reference, translate/summarize actions
+- `ui/application-main-window.ui` - Replaced GtkBox with GtkPaned for resizable sidebar
+- `ui/components-conversation-actions.ui` - Removed translate/summarize buttons (gemini_buttons box)
 
 ### Mental Context / Gotchas
 
@@ -393,6 +425,15 @@ sudo reboot
 - gemini-cli MCP config lives in `~/.gemini/settings.json` - auto-configured on app startup
 - MCP server path in .deb: `/usr/share/geary-gemini/mcp-server/server.js`
 - Node.js path in .deb: `/usr/share/geary-gemini/node/bin/node`
+- gemini-cli sends `notifications/initialized` (not just `initialized`) - must handle both
+- D-Bus environment `DBUS_SESSION_BUS_ADDRESS` must be passed to MCP subprocess via `env` in settings.json
+
+**Streaming and Output Gotchas:**
+- Use `--output-format stream-json` for structured output with message types
+- JSON stream types: `tool_use` (thinking), `tool_result` (tool output), `message` (final response)
+- Only `message` type with `role=assistant` should be shown to user as final response
+- Pango markup requires `GLib.Markup.escape_text()` BEFORE applying regex replacements
+- GtkPaned with `wide_handle=True` provides better drag UX for resizable panels
 
 **Dockerfile Key Packages:**
 ```
@@ -401,7 +442,7 @@ pip: meson>=1.7,<1.10
 ```
 
 ---
-*Last updated: 2026-01-20*
+*Last updated: 2026-01-21*
 
 ## Instructions for user
 ***The "Let's Pick This Up Again" Prompt***

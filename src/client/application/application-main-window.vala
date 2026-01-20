@@ -31,8 +31,6 @@ public class Application.MainWindow :
     public const string ACTION_TRASH_CONVERSATION = "trash-conversation";
     public const string ACTION_ZOOM = "zoom";
     public const string ACTION_NAVIGATION_BACK = "navigation-back";
-    public const string ACTION_TRANSLATE_CONVERSATION = "translate-conversation";
-    public const string ACTION_SUMMARIZE_CONVERSATION = "summarize-conversation";
     public const string ACTION_TOGGLE_GEMINI_SIDEBAR = "toggle-gemini-sidebar";
 
     private const ActionEntry[] EDIT_ACTIONS = {
@@ -69,8 +67,6 @@ public class Application.MainWindow :
         // Message viewer
         { ACTION_ZOOM, on_zoom, "s" },
         // Gemini AI actions
-        { ACTION_TRANSLATE_CONVERSATION, on_translate_conversation },
-        { ACTION_SUMMARIZE_CONVERSATION, on_summarize_conversation },
         { ACTION_TOGGLE_GEMINI_SIDEBAR, on_toggle_gemini_sidebar },
     };
 
@@ -425,7 +421,6 @@ public class Application.MainWindow :
 
     // Gemini sidebar
     [GtkChild] private unowned Gtk.Revealer gemini_sidebar_revealer;
-    [GtkChild] private unowned Gtk.Separator gemini_separator;
     [GtkChild] private unowned Gtk.Box gemini_sidebar_container;
 
     private Gemini.Sidebar? gemini_sidebar = null;
@@ -2456,85 +2451,6 @@ public class Application.MainWindow :
         reply_conversation(FORWARD);
     }
 
-    private void on_translate_conversation() {
-        this.translate_current_conversation.begin();
-    }
-
-    private async void translate_current_conversation() {
-        string? email_text = get_displayed_email_text();
-        if (email_text == null) {
-            var notification = new Components.InAppNotification(
-                _("No email content to translate")
-            );
-            add_notification(notification);
-            return;
-        }
-
-        // Ensure sidebar is created and visible
-        ensure_gemini_sidebar_visible();
-
-        // Start loading in sidebar
-        this.gemini_sidebar.start_loading(_("Translating..."));
-
-        try {
-            string translated = yield this.application.gemini_service.run_prompt(
-                "Translate the following text to %s. Output ONLY the translation, nothing else:\n\n%s".printf(
-                    this.application.gemini_service.get_system_language_name(),
-                    email_text
-                ),
-                (line) => {
-                    this.gemini_sidebar.update_loading(line);
-                }
-            );
-            this.gemini_sidebar.stop_loading();
-            this.gemini_sidebar.show_ai_result(_("Translation"), translated.strip());
-        } catch (Error e) {
-            this.gemini_sidebar.stop_loading();
-            var error_notification = new Components.InAppNotification(
-                _("Translation failed: %s").printf(e.message)
-            );
-            add_notification(error_notification);
-        }
-    }
-
-    private void on_summarize_conversation() {
-        this.summarize_current_conversation.begin();
-    }
-
-    private async void summarize_current_conversation() {
-        string? email_text = get_displayed_email_text();
-        if (email_text == null) {
-            var notification = new Components.InAppNotification(
-                _("No email content to summarize")
-            );
-            add_notification(notification);
-            return;
-        }
-
-        // Ensure sidebar is created and visible
-        ensure_gemini_sidebar_visible();
-
-        // Start loading in sidebar
-        this.gemini_sidebar.start_loading(_("Summarizing..."));
-
-        try {
-            string summary = yield this.application.gemini_service.run_prompt(
-                "Summarize the following email concisely. Keep the key points and action items:\n\n%s".printf(email_text),
-                (line) => {
-                    this.gemini_sidebar.update_loading(line);
-                }
-            );
-            this.gemini_sidebar.stop_loading();
-            this.gemini_sidebar.show_ai_result(_("Summary"), summary.strip());
-        } catch (Error e) {
-            this.gemini_sidebar.stop_loading();
-            var error_notification = new Components.InAppNotification(
-                _("Summarize failed: %s").printf(e.message)
-            );
-            add_notification(error_notification);
-        }
-    }
-
     /**
      * Ensure the Gemini sidebar is created and visible.
      */
@@ -2616,7 +2532,6 @@ public class Application.MainWindow :
     private void set_gemini_sidebar_visible(bool visible) {
         this.gemini_sidebar_revealer.visible = visible;
         this.gemini_sidebar_revealer.reveal_child = visible;
-        this.gemini_separator.visible = visible;
         this.conversation_headerbar.gemini_open = visible;
     }
 

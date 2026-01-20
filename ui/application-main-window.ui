@@ -150,25 +150,29 @@
                             <property name="position">0</property>
                           </packing>
                         </child>
-                        <!-- Horizontal box for conversation content and Gemini sidebar -->
+                        <!-- Horizontal paned for conversation content and Gemini sidebar (resizable) -->
                         <child>
-                          <object class="GtkBox" id="conversation_content_box">
+                          <object class="GtkPaned" id="conversation_gemini_paned">
                             <property name="visible">True</property>
                             <property name="orientation">horizontal</property>
+                            <property name="wide_handle">True</property>
                             <property name="hexpand">True</property>
                             <property name="vexpand">True</property>
-                            <!-- conversation_viewer will be added here dynamically -->
-                            <!-- Gemini sidebar separator -->
+                            <!-- Left pane: conversation viewer (added dynamically) -->
                             <child>
-                              <object class="GtkSeparator" id="gemini_separator">
-                                <property name="visible">False</property>
+                              <object class="GtkBox" id="conversation_content_box">
+                                <property name="visible">True</property>
                                 <property name="orientation">vertical</property>
-                                <style>
-                                  <class name="sidebar"/>
-                                </style>
+                                <property name="hexpand">True</property>
+                                <property name="vexpand">True</property>
+                                <!-- conversation_viewer will be added here dynamically -->
                               </object>
+                              <packing>
+                                <property name="resize">True</property>
+                                <property name="shrink">False</property>
+                              </packing>
                             </child>
-                            <!-- Gemini sidebar -->
+                            <!-- Right pane: Gemini sidebar -->
                             <child>
                               <object class="GtkRevealer" id="gemini_sidebar_revealer">
                                 <property name="visible">False</property>
@@ -179,13 +183,17 @@
                                   <object class="GtkBox" id="gemini_sidebar_container">
                                     <property name="visible">True</property>
                                     <property name="orientation">vertical</property>
-                                    <property name="width_request">320</property>
+                                    <property name="width_request">280</property>
                                     <style>
                                       <class name="sidebar"/>
                                     </style>
                                   </object>
                                 </child>
                               </object>
+                              <packing>
+                                <property name="resize">False</property>
+                                <property name="shrink">False</property>
+                              </packing>
                             </child>
                           </object>
                           <packing>
