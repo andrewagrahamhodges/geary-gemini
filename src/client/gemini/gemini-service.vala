@@ -210,8 +210,10 @@ public class Gemini.Service : GLib.Object {
      * Delegate for receiving structured streaming output.
      * @param msg_type The message type: "tool_use", "tool_result", "message", "thinking", etc.
      * @param content The content/description for this message
+     * @param tool_name The tool name (for tool_use/tool_result), null otherwise
+     * @param tool_input_json The tool input as a JSON string (for tool_use), null otherwise
      */
-    public delegate void StructuredStreamCallback(string msg_type, string content);
+    public delegate void StructuredStreamCallback(string msg_type, string content, string? tool_name, string? tool_input_json);
 
     /**
      * Run a prompt through gemini-cli and return the response.
@@ -328,10 +330,19 @@ public class Gemini.Service : GLib.Object {
 
                 switch (msg_type) {
                     case "tool_use":
-                        // Show tool being used in thinking indicator
+                        // Extract tool name and input data as JSON string
                         string tool_name = obj.has_member("tool_name") ? obj.get_string_member("tool_name") : "tool";
+                        string? input_json = null;
+                        if (obj.has_member("input")) {
+                            var input_node = obj.get_member("input");
+                            if (input_node != null) {
+                                var gen = new Json.Generator();
+                                gen.set_root(input_node);
+                                input_json = gen.to_data(null);
+                            }
+                        }
                         if (on_stream != null) {
-                            on_stream("tool_use", "Using %s...".printf(tool_name));
+                            on_stream("tool_use", "", tool_name, input_json);
                         }
                         break;
 
@@ -339,7 +350,7 @@ public class Gemini.Service : GLib.Object {
                         // Show tool result status
                         string status = obj.has_member("status") ? obj.get_string_member("status") : "";
                         if (on_stream != null) {
-                            on_stream("tool_result", status == "success" ? "Done" : "Error");
+                            on_stream("tool_result", status, null, null);
                         }
                         break;
 
@@ -350,7 +361,7 @@ public class Gemini.Service : GLib.Object {
                             string content = obj.get_string_member("content");
                             response_builder.append(content);
                             if (on_stream != null) {
-                                on_stream("message", content);
+                                on_stream("message", content, null, null);
                             }
                         }
                         break;
@@ -362,7 +373,7 @@ public class Gemini.Service : GLib.Object {
                     default:
                         // Other types - pass through for display
                         if (on_stream != null && msg_type.length > 0) {
-                            on_stream(msg_type, "");
+                            on_stream(msg_type, "", null, null);
                         }
                         break;
                 }

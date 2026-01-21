@@ -23,13 +23,14 @@ public class Gemini.Sidebar : Gtk.Bin {
     [GtkChild] private unowned Gtk.ScrolledWindow chat_scrolled;
     [GtkChild] private unowned Gtk.Box chat_box;
     [GtkChild] private unowned Gtk.Label welcome_label;
-    [GtkChild] private unowned Gtk.Entry message_entry;
+    [GtkChild] private unowned Gtk.TextView message_text;
     [GtkChild] private unowned Gtk.Button send_button;
     [GtkChild] private unowned Gtk.Revealer loading_revealer;
     [GtkChild] private unowned Gtk.Label loading_label;
+    [GtkChild] private unowned Gtk.Box thinking_content_box;
 
     private bool is_processing = false;
-    private Gtk.Label? streaming_content_label = null;
+    private Gtk.Box? current_tool_item = null;
 
     static construct {
         set_css_name("gemini-sidebar");
@@ -43,8 +44,12 @@ public class Gemini.Sidebar : Gtk.Bin {
         // Connect signals
         this.login_button.clicked.connect(on_login_clicked);
         this.send_button.clicked.connect(on_send_clicked);
-        this.message_entry.changed.connect(on_entry_changed);
-        this.message_entry.activate.connect(on_send_clicked);
+
+        // Connect text buffer signals for GtkTextView
+        this.message_text.buffer.changed.connect(on_text_changed);
+
+        // Handle Ctrl+Enter to send
+        this.message_text.key_press_event.connect(on_text_key_press);
 
         // Connect service signals
         this.service.authentication_required.connect(on_authentication_required);
@@ -63,7 +68,7 @@ public class Gemini.Sidebar : Gtk.Bin {
             this.status_label.label = _("Gemini CLI not found. Please reinstall geary-gemini.");
             this.status_revealer.reveal_child = true;
             this.login_button.visible = false;
-            this.message_entry.sensitive = false;
+            this.message_text.sensitive = false;
             return;
         }
 
@@ -72,13 +77,13 @@ public class Gemini.Sidebar : Gtk.Bin {
             bool authenticated = this.service.check_authenticated.end(res);
             if (authenticated) {
                 this.status_revealer.reveal_child = false;
-                this.message_entry.sensitive = true;
+                this.message_text.sensitive = true;
             } else {
                 this.status_label.label = _("Sign in with your Google account to use Gemini AI features.");
                 this.status_revealer.reveal_child = true;
                 this.login_button.visible = true;
                 this.login_button.sensitive = true;
-                this.message_entry.sensitive = false;
+                this.message_text.sensitive = false;
             }
         });
     }
@@ -103,13 +108,13 @@ public class Gemini.Sidebar : Gtk.Bin {
         this.status_revealer.reveal_child = true;
         this.login_button.visible = true;
         this.login_button.sensitive = true;
-        this.message_entry.sensitive = false;
+        this.message_text.sensitive = false;
     }
 
     private void on_authentication_completed(bool success, string? error_message) {
         if (success) {
             this.status_revealer.reveal_child = false;
-            this.message_entry.sensitive = true;
+            this.message_text.sensitive = true;
         } else {
             this.status_label.label = _("Login failed: %s").printf(
                 error_message ?? _("Unknown error")
@@ -118,19 +123,44 @@ public class Gemini.Sidebar : Gtk.Bin {
         }
     }
 
-    private void on_entry_changed() {
-        string text = this.message_entry.text.strip();
+    /**
+     * Get the text from the message text view.
+     */
+    private string get_message_text() {
+        Gtk.TextIter start, end;
+        this.message_text.buffer.get_bounds(out start, out end);
+        return this.message_text.buffer.get_text(start, end, false);
+    }
+
+    /**
+     * Handle text buffer changes.
+     */
+    private void on_text_changed() {
+        string text = get_message_text().strip();
         this.send_button.sensitive = text.length > 0 && !this.is_processing;
     }
 
+    /**
+     * Handle key press in text view - Ctrl+Enter sends the message.
+     */
+    private bool on_text_key_press(Gdk.EventKey event) {
+        // Ctrl+Enter sends the message
+        if ((event.state & Gdk.ModifierType.CONTROL_MASK) != 0 &&
+            (event.keyval == Gdk.Key.Return || event.keyval == Gdk.Key.KP_Enter)) {
+            on_send_clicked();
+            return true;  // Event handled
+        }
+        return false;  // Let normal handling continue (Enter adds newline)
+    }
+
     private void on_send_clicked() {
-        string message = this.message_entry.text.strip();
+        string message = get_message_text().strip();
         if (message.length == 0 || this.is_processing) {
             return;
         }
 
         // Clear input and add user message to chat
-        this.message_entry.text = "";
+        this.message_text.buffer.set_text("", 0);
         add_message(message, true);
 
         // Send to Gemini
@@ -142,69 +172,202 @@ public class Gemini.Sidebar : Gtk.Bin {
         this.loading_revealer.reveal_child = true;
         this.loading_label.label = _("Thinking...");
         this.send_button.sensitive = false;
-        this.message_entry.sensitive = false;
+        this.message_text.sensitive = false;
 
-        // Create a streaming content label to show live output
-        this.streaming_content_label = null;
+        // Clear any previous tool items
+        clear_tool_items();
 
         try {
-            // Use structured streaming - callback receives (type, content)
-            // tool_use/tool_result go to thinking indicator, message content is the response
-            string response = yield this.service.chat_streaming(message, (msg_type, content) => {
-                handle_stream_message(msg_type, content);
+            // Use structured streaming - callback receives (type, content, tool_name, input_data)
+            string response = yield this.service.chat_streaming(message, (msg_type, content, tool_name, input_data) => {
+                handle_stream_message(msg_type, content, tool_name, input_data);
             });
-            // Clear streaming label and add final message
-            this.streaming_content_label = null;
             // Response already filtered - only contains assistant message content
             add_message(response.strip(), false);
         } catch (Error e) {
-            this.streaming_content_label = null;
             add_message(_("Error: %s").printf(e.message), false, true);
         }
 
         this.is_processing = false;
         this.loading_revealer.reveal_child = false;
-        this.message_entry.sensitive = true;
-        on_entry_changed();
-        this.message_entry.grab_focus();
+        this.current_tool_item = null;
+        this.message_text.sensitive = true;
+        on_text_changed();
+        this.message_text.grab_focus();
     }
 
     /**
      * Handle structured streaming messages from gemini-cli.
-     * Shows tool use in thinking indicator, ignores message content (already accumulated).
+     * Shows tool use in thinking panel with detailed descriptions.
      */
-    private void handle_stream_message(string msg_type, string content) {
+    private void handle_stream_message(string msg_type, string content, string? tool_name, string? tool_input_json) {
         switch (msg_type) {
             case "tool_use":
-                // Show which tool is being used
-                this.loading_label.label = content;  // e.g., "Using get_selected_email..."
+                // Add a new tool item to the thinking panel
+                if (tool_name != null) {
+                    string description = get_tool_description(tool_name, tool_input_json);
+                    add_tool_item(tool_name, description);
+                }
                 break;
 
             case "tool_result":
-                // Brief status update
-                if (content.length > 0) {
-                    this.loading_label.label = content;
-                }
+                // Mark current tool as complete
+                bool success = content == "success";
+                complete_current_tool(success);
                 break;
 
             case "message":
-                // Assistant response streaming - show preview in thinking area
-                if (content.length > 0) {
-                    string preview = content.strip();
-                    if (preview.length > 50) {
-                        preview = preview.substring(0, 47) + "...";
-                    }
-                    if (preview.length > 0) {
-                        this.loading_label.label = preview;
-                    }
-                }
+                // Assistant response streaming - update header
+                this.loading_label.label = _("Composing response...");
                 break;
 
             default:
-                // Other message types - just show "Processing..."
-                this.loading_label.label = _("Processing...");
+                // Other message types
                 break;
         }
+    }
+
+    /**
+     * Generate a human-readable description for a tool based on its input.
+     */
+    private string get_tool_description(string tool_name, string? input_json) {
+        // Parse the input JSON if provided
+        Json.Object? input_data = null;
+        if (input_json != null && input_json.length > 0) {
+            try {
+                var parser = new Json.Parser();
+                parser.load_from_data(input_json);
+                var root = parser.get_root();
+                if (root != null && root.get_node_type() == Json.NodeType.OBJECT) {
+                    input_data = root.get_object();
+                }
+            } catch (Error e) {
+                // Ignore parse errors
+            }
+        }
+
+        switch (tool_name) {
+            case "get_selected_email":
+                return _("Reading selected email...");
+
+            case "list_emails":
+                if (input_data != null) {
+                    string folder = input_data.has_member("folder") ? input_data.get_string_member("folder") : "INBOX";
+                    int64 limit = input_data.has_member("limit") ? input_data.get_int_member("limit") : 10;
+                    return _("Listing %lld emails from %s...").printf(limit, folder);
+                }
+                return _("Listing emails...");
+
+            case "search_emails":
+                if (input_data != null && input_data.has_member("query")) {
+                    string query = input_data.get_string_member("query");
+                    if (query.length > 30) {
+                        query = query.substring(0, 27) + "...";
+                    }
+                    return _("Searching: %s").printf(query);
+                }
+                return _("Searching emails...");
+
+            case "read_email":
+                return _("Reading email content...");
+
+            case "select_email":
+                return _("Selecting email...");
+
+            default:
+                return _("Using %s...").printf(tool_name);
+        }
+    }
+
+    /**
+     * Add a tool item to the thinking panel.
+     */
+    private void add_tool_item(string tool_name, string description) {
+        // Complete any previous tool first
+        if (this.current_tool_item != null) {
+            complete_current_tool(true);
+        }
+
+        var item_box = new Gtk.Box(Gtk.Orientation.HORIZONTAL, 6);
+        item_box.visible = true;
+
+        // Spinner for in-progress
+        var spinner = new Gtk.Spinner();
+        spinner.visible = true;
+        spinner.active = true;
+        spinner.set_size_request(12, 12);
+        item_box.pack_start(spinner, false, false, 0);
+
+        // Tool name (bold)
+        var name_label = new Gtk.Label(tool_name);
+        name_label.visible = true;
+        name_label.xalign = 0;
+        var attrs = new Pango.AttrList();
+        attrs.insert(Pango.attr_weight_new(Pango.Weight.BOLD));
+        attrs.insert(Pango.attr_scale_new(0.9));
+        name_label.attributes = attrs;
+        item_box.pack_start(name_label, false, false, 0);
+
+        // Description (dimmed)
+        var desc_label = new Gtk.Label(description);
+        desc_label.visible = true;
+        desc_label.xalign = 0;
+        desc_label.hexpand = true;
+        desc_label.ellipsize = Pango.EllipsizeMode.END;
+        desc_label.get_style_context().add_class("dim-label");
+        var desc_attrs = new Pango.AttrList();
+        desc_attrs.insert(Pango.attr_scale_new(0.9));
+        desc_label.attributes = desc_attrs;
+        item_box.pack_start(desc_label, true, true, 0);
+
+        this.thinking_content_box.pack_start(item_box, false, false, 0);
+        this.current_tool_item = item_box;
+    }
+
+    /**
+     * Mark the current tool item as complete.
+     */
+    private void complete_current_tool(bool success) {
+        if (this.current_tool_item == null) {
+            return;
+        }
+
+        // Find and replace the spinner with a status icon
+        foreach (var child in this.current_tool_item.get_children()) {
+            if (child is Gtk.Spinner) {
+                this.current_tool_item.remove(child);
+
+                var icon = new Gtk.Image.from_icon_name(
+                    success ? "emblem-ok-symbolic" : "dialog-error-symbolic",
+                    Gtk.IconSize.MENU
+                );
+                icon.visible = true;
+                icon.set_size_request(12, 12);
+                if (success) {
+                    icon.get_style_context().add_class("dim-label");
+                }
+                this.current_tool_item.pack_start(icon, false, false, 0);
+                this.current_tool_item.reorder_child(icon, 0);
+                break;
+            }
+        }
+
+        // Dim the entire row for completed tools
+        if (success) {
+            this.current_tool_item.get_style_context().add_class("dim-label");
+        }
+
+        this.current_tool_item = null;
+    }
+
+    /**
+     * Clear all tool items from the thinking panel.
+     */
+    private void clear_tool_items() {
+        foreach (var child in this.thinking_content_box.get_children()) {
+            this.thinking_content_box.remove(child);
+        }
+        this.current_tool_item = null;
     }
 
     /**
@@ -431,7 +594,8 @@ public class Gemini.Sidebar : Gtk.Bin {
         this.loading_label.label = initial_message;
         this.loading_revealer.reveal_child = true;
         this.send_button.sensitive = false;
-        this.message_entry.sensitive = false;
+        this.message_text.sensitive = false;
+        clear_tool_items();
     }
 
     /**
@@ -453,7 +617,7 @@ public class Gemini.Sidebar : Gtk.Bin {
     public void stop_loading() {
         this.is_processing = false;
         this.loading_revealer.reveal_child = false;
-        this.message_entry.sensitive = true;
-        on_entry_changed();
+        this.message_text.sensitive = true;
+        on_text_changed();
     }
 }
