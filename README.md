@@ -332,6 +332,12 @@ sudo reboot
     - Wide handle for easy drag resizing
     - Minimum sidebar width of 280px (shrink=False)
     - Removed redundant `gemini_separator` widget
+34. [x] **Enhanced thinking panel with tool activity display** (2026-01-21)
+    - `StructuredStreamCallback` delegate with tool_name and tool_input_json parameters
+    - Thinking panel shows detailed tool descriptions (e.g., "Listing 10 emails from INBOX...")
+    - Tool items display with spinner while in progress, checkmark when complete
+    - `get_tool_description()` parses tool input JSON for human-readable messages
+    - `add_tool_item()`, `complete_current_tool()`, `clear_tool_items()` helper methods
 
 ### Next Steps
 
@@ -392,6 +398,11 @@ sudo reboot
 - `ui/application-main-window.ui` - Replaced GtkBox with GtkPaned for resizable sidebar
 - `ui/components-conversation-actions.ui` - Removed translate/summarize buttons (gemini_buttons box)
 
+**Files Modified (2026-01-21) - Enhanced Thinking Panel:**
+- `src/client/gemini/gemini-service.vala` - Extended `StructuredStreamCallback` with tool_name and tool_input_json params
+- `src/client/gemini/gemini-sidebar.vala` - Added thinking panel with tool activity: spinners, descriptions, completion states
+- `ui/gemini-sidebar.ui` - Added `thinking_content_box` for dynamic tool item display
+
 ### Mental Context / Gotchas
 
 **Build System Gotchas:**
@@ -435,6 +446,13 @@ sudo reboot
 - Pango markup requires `GLib.Markup.escape_text()` BEFORE applying regex replacements
 - GtkPaned with `wide_handle=True` provides better drag UX for resizable panels
 
+**Thinking Panel UI Patterns:**
+- Tool items are added dynamically to `thinking_content_box` during streaming
+- Each tool item has: spinner (in-progress) or icon (complete), bold tool name, dimmed description
+- `current_tool_item` tracks the active tool for completion updates
+- `complete_current_tool()` replaces spinner with checkmark/error icon
+- Clear all tool items at start of each new message with `clear_tool_items()`
+
 **Dockerfile Key Packages:**
 ```
 libgcr-4-dev, libgck-2-dev, libpeas-2-dev, gir1.2-peas-2
@@ -442,7 +460,7 @@ pip: meson>=1.7,<1.10
 ```
 
 ---
-*Last updated: 2026-01-21*
+*Last updated: 2026-01-21 (Session 2: Enhanced thinking panel)*
 
 ## Instructions for user
 ***The "Let's Pick This Up Again" Prompt***
