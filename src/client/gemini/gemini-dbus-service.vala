@@ -17,6 +17,10 @@ public class Gemini.DBusService : GLib.Object {
     public const string BUS_NAME = "org.gnome.Geary.EmailTools";
     public const string OBJECT_PATH = "/org/gnome/Geary/EmailTools";
 
+    // Workspace directory where attachments are copied for gemini-cli access
+    // This must be within the geary-gemini project directory for gemini-cli to read
+    private const string ATTACHMENT_WORKSPACE_DIR = "/home/andrewhodges/Projects/geary-gemini/.gemini-attachments";
+
     // Store main window reference (not exposed via D-Bus)
     private Application.MainWindow? _main_window = null;
     private uint bus_id = 0;
@@ -458,20 +462,75 @@ public class Gemini.DBusService : GLib.Object {
             return generator.to_data(null);
         }
 
-        // Read the file content
-        try {
-            var file_buffer = new Geary.Memory.FileBuffer(attachment.file, true);
-            int64 actual_size = (int64) file_buffer.size;
-            bool truncated = actual_size > max_size;
+        // Determine MIME type
+        string mime_type = attachment.content_type.get_mime_type();
+        bool is_text = is_text_content_type(mime_type);
+        bool is_supported = is_gemini_supported_type(mime_type);
 
-            builder.set_member_name("truncated");
-            builder.add_boolean_value(truncated);
+        // Add supported flag to response
+        builder.set_member_name("supported");
+        builder.add_boolean_value(is_supported);
 
-            // Determine if this is a text-based content type
-            string mime_type = attachment.content_type.get_mime_type();
-            bool is_text = is_text_content_type(mime_type);
+        if (!is_supported) {
+            builder.set_member_name("error");
+            builder.add_string_value("File type not supported for AI analysis: " + mime_type +
+                ". Supported types: images (PNG, JPEG, GIF, WebP), PDFs, and text files.");
+            builder.end_object();
+            var generator = new Json.Generator();
+            generator.set_root(builder.get_root());
+            return generator.to_data(null);
+        }
 
-            if (is_text) {
+        // For supported binary files (images, PDFs), copy to workspace directory
+        // so gemini-cli can access them (it has workspace path restrictions)
+        string accessible_path;
+        if (!is_text) {
+            try {
+                // Ensure workspace directory exists
+                var workspace_dir = File.new_for_path(ATTACHMENT_WORKSPACE_DIR);
+                if (!workspace_dir.query_exists()) {
+                    workspace_dir.make_directory_with_parents();
+                }
+
+                // Generate safe filename: emailid_index_filename
+                string safe_email_id = email_id.replace("/", "_").replace(":", "_");
+                string original_name = attachment.content_filename ?? "attachment";
+                string safe_filename = "%s_%d_%s".printf(safe_email_id, attachment_index, original_name);
+                var dest_file = workspace_dir.get_child(safe_filename);
+
+                // Copy file if not already there or if source is newer
+                if (!dest_file.query_exists()) {
+                    attachment.file.copy(dest_file, FileCopyFlags.OVERWRITE);
+                }
+
+                accessible_path = dest_file.get_path();
+            } catch (Error e) {
+                builder.set_member_name("error");
+                builder.add_string_value("Failed to copy attachment to accessible location: " + e.message);
+                builder.end_object();
+                var generator = new Json.Generator();
+                generator.set_root(builder.get_root());
+                return generator.to_data(null);
+            }
+        } else {
+            // Text files - use original path (content included inline anyway)
+            accessible_path = attachment.file.get_path();
+        }
+
+        // Return the accessible file path
+        builder.set_member_name("file_path");
+        builder.add_string_value(accessible_path);
+
+        // For text files, also include the content inline for convenience
+        if (is_text) {
+            try {
+                var file_buffer = new Geary.Memory.FileBuffer(attachment.file, true);
+                int64 actual_size = (int64) file_buffer.size;
+                bool truncated = actual_size > max_size;
+
+                builder.set_member_name("truncated");
+                builder.add_boolean_value(truncated);
+
                 builder.set_member_name("encoding");
                 builder.add_string_value("text");
 
@@ -481,22 +540,17 @@ public class Gemini.DBusService : GLib.Object {
                 }
                 builder.set_member_name("content");
                 builder.add_string_value(content);
-            } else {
-                builder.set_member_name("encoding");
-                builder.add_string_value("base64");
-
-                uint8[] data = file_buffer.get_uint8_array();
-                if (truncated) {
-                    data = data[0:(int)max_size];
-                }
-                string base64_content = GLib.Base64.encode(data);
-                builder.set_member_name("content");
-                builder.add_string_value(base64_content);
+            } catch (Error e) {
+                // File path is still available, just no inline content
+                builder.set_member_name("content_error");
+                builder.add_string_value("Failed to read content: " + e.message);
             }
-
-        } catch (Error e) {
-            builder.set_member_name("error");
-            builder.add_string_value("Failed to read attachment: " + e.message);
+        } else {
+            // For binary files (images, PDFs), the file has been copied to workspace
+            builder.set_member_name("encoding");
+            builder.add_string_value("binary");
+            builder.set_member_name("note");
+            builder.add_string_value("File copied to workspace - Gemini can read this file directly at the file_path");
         }
 
         builder.end_object();
@@ -504,6 +558,27 @@ public class Gemini.DBusService : GLib.Object {
         var generator = new Json.Generator();
         generator.set_root(builder.get_root());
         return generator.to_data(null);
+    }
+
+    /**
+     * Check if a MIME type is supported by Gemini for multimodal analysis.
+     * Supported types: images (PNG, JPEG, GIF, WebP), PDFs, and text-based files.
+     */
+    private bool is_gemini_supported_type(string mime_type) {
+        // Images
+        if (mime_type == "image/png") return true;
+        if (mime_type == "image/jpeg") return true;
+        if (mime_type == "image/jpg") return true;
+        if (mime_type == "image/gif") return true;
+        if (mime_type == "image/webp") return true;
+
+        // Documents
+        if (mime_type == "application/pdf") return true;
+
+        // Text types are always supported
+        if (is_text_content_type(mime_type)) return true;
+
+        return false;
     }
 
     /**

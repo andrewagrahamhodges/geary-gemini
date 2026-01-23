@@ -29,6 +29,15 @@ public class Gemini.Service : GLib.Object {
         "- When the user says \"the email\", \"this email\", or \"selected email\", use get_selected_email to retrieve it\n" +
         "- Assume questions are about the currently selected email unless the user asks about other emails\n" +
         "- When translating or summarizing, get the selected email first, then process it\n\n" +
+        "ATTACHMENTS:\n" +
+        "- Emails may have attachments listed in their 'attachments' array with index, filename, content_type, filesize\n" +
+        "- Use get_attachment_content(email_id, attachment_index) to access an attachment\n" +
+        "- SUPPORTED TYPES: PNG, JPEG, GIF, WebP images; PDF documents; text files (TXT, JSON, XML, etc.)\n" +
+        "- UNSUPPORTED TYPES: ZIP, RAR, DOC, XLS, EXE, etc. - these will return an error\n" +
+        "- The tool returns file_path - READ THIS FILE directly to analyze the content\n" +
+        "- For images: describe what you see, extract any text (OCR), answer questions about visual content\n" +
+        "- For PDFs: read the document and summarize or answer questions about it\n" +
+        "- For text files: content is also included inline in the response for convenience\n\n" +
         "FORMATTING:\n" +
         "- Use markdown formatting to make responses clear and readable\n" +
         "- Use **bold** for emphasis and important terms\n" +
@@ -44,10 +53,11 @@ public class Gemini.Service : GLib.Object {
         "- If you need clarification, ask a brief question\n\n" +
         "AVAILABLE TOOLS:\n" +
         "- list_emails: List emails in the current folder\n" +
-        "- get_selected_email: Get the currently selected email\n" +
+        "- get_selected_email: Get the currently selected email (includes attachments array)\n" +
         "- read_email: Read a specific email by ID\n" +
         "- search_emails: Search emails\n" +
-        "- select_email: Select an email in the UI\n\n" +
+        "- select_email: Select an email in the UI\n" +
+        "- get_attachment_content: Get attachment file path and content\n\n" +
         "RESTRICTIONS:\n" +
         "- You can only access emails through the provided tools\n" +
         "- You cannot send, delete, or modify emails\n" +

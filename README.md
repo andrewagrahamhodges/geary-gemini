@@ -351,14 +351,28 @@ sudo reboot
 37. [x] **Disabled valadoc in build** (2026-01-23)
     - Added `-Dvaladoc=disabled` to meson setup in docker-compose.yml
     - Fixes build failure caused by valadoc generation errors
+38. [x] **Fixed sidebar width and paned positioning** (2026-01-23)
+    - Increased sidebar from 360px to 480px for better usability
+    - Added `conversation_gemini_paned` GtkChild reference to MainWindow
+    - `set_gemini_sidebar_visible()` now sets paned position to give sidebar proper width
+39. [x] **Fixed attachment access for gemini-cli** (2026-01-23)
+    - **Root cause discovered**: gemini-cli has workspace restrictions - can only read files from project directory or `~/.gemini/tmp/<session>/`
+    - Geary stores attachments in `~/.local/share/geary/` which is outside allowed paths
+    - **Solution**: Copy attachments to `.gemini-attachments/` in project workspace before returning path
+    - Added `ATTACHMENT_WORKSPACE_DIR` constant for workspace copy location
+    - Added `is_gemini_supported_type()` function for MIME type validation
+    - Supported types: PNG, JPEG, GIF, WebP images; PDF documents; text files
+    - Unsupported types (ZIP, DOC, XLS, etc.) return clear error message
+    - Updated MCP tool description with supported file types
+    - Updated system prompt with clear attachment guidance
 
 ### Next Steps
 
 1. [ ] Add email action tools to MCP server (archive, delete, star, label)
-2. [ ] Test MCP integration end-to-end with gemini-cli
-3. [ ] Add keyboard shortcut for Gemini sidebar toggle
-4. [ ] Consider adding Gemini suggestions in email search
-5. [ ] Add email context to Composer AI Helper when replying (currently passes null)
+2. [ ] Add keyboard shortcut for Gemini sidebar toggle
+3. [ ] Consider adding Gemini suggestions in email search
+4. [ ] Add email context to Composer AI Helper when replying (currently passes null)
+5. [ ] Add cleanup mechanism for `.gemini-attachments/` directory (old files)
 
 ### Session Notes
 
@@ -417,10 +431,14 @@ sudo reboot
 - `ui/gemini-sidebar.ui` - Added `thinking_content_box` for dynamic tool item display
 
 **Files Modified (2026-01-23) - Attachment Access & Sidebar Fix:**
-- `ui/application-main-window.ui` - Increased sidebar width_request from 280 to 360
-- `src/client/gemini/gemini-dbus-service.vala` - Added attachments to email JSON, `get_attachment_content()` method, `is_text_content_type()` helper
-- `mcp-server/server.js` - Added `get_attachment_content` tool definition and handler
+- `ui/application-main-window.ui` - Increased sidebar width_request to 480px
+- `ui/gemini-sidebar.ui` - Increased main_box width_request to 480px
+- `src/client/application/application-main-window.vala` - Added `conversation_gemini_paned` GtkChild, paned positioning in `set_gemini_sidebar_visible()`
+- `src/client/gemini/gemini-dbus-service.vala` - Added `ATTACHMENT_WORKSPACE_DIR`, `is_gemini_supported_type()`, file copy logic for binary attachments
+- `src/client/gemini/gemini-service.vala` - Updated system prompt with clear attachment guidance and supported types
+- `mcp-server/server.js` - Updated `get_attachment_content` tool description with supported file types
 - `docker-compose.yml` - Added `-Dvaladoc=disabled` to meson setup
+- `.gitignore` - Added `.gemini-attachments/` directory
 
 ### Mental Context / Gotchas
 
@@ -483,11 +501,26 @@ pip: meson>=1.7,<1.10
 - Attachment `file` property is a GLib.File - may be null if not saved to disk
 - Use `Geary.Memory.FileBuffer` to read attachment content
 - Text detection via MIME type: `text/*`, `application/json`, `+xml`, `+json` suffixes
-- Base64 encoding for binary attachments, text for text-based types
 - Size limits: default 10MB, max 50MB (configurable in `get_attachment_content`)
 
+**gemini-cli Workspace Restrictions (CRITICAL):**
+- gemini-cli can ONLY read files from:
+  1. The project workspace directory (where it was launched from)
+  2. Session-specific temp directory: `~/.gemini/tmp/<session-hash>/`
+- Geary stores attachments in `~/.local/share/geary/` which is OUTSIDE allowed paths
+- Solution: Copy binary attachments to `.gemini-attachments/` in project workspace
+- The `ATTACHMENT_WORKSPACE_DIR` constant in `gemini-dbus-service.vala` defines this location
+- Supported MIME types for Gemini analysis: PNG, JPEG, GIF, WebP, PDF, text/*
+- Unsupported types (ZIP, DOC, XLS, EXE, etc.) return an error immediately
+
+**Sidebar Paned Positioning:**
+- `conversation_gemini_paned` is the GtkPaned containing conversation viewer and sidebar
+- When sidebar is shown, `set_gemini_sidebar_visible()` calculates and sets paned position
+- Formula: `target_position = window_width - sidebar_width - 50` (50px buffer)
+- Sidebar width is 480px (defined in 3 places: gemini-sidebar.ui, application-main-window.ui, and Vala code)
+
 ---
-*Last updated: 2026-01-23 (Session 3: Attachment access & sidebar fix)*
+*Last updated: 2026-01-23 (Session 4: Sidebar width 480px, attachment workspace fix)*
 
 ## Instructions for user
 ***The "Let's Pick This Up Again" Prompt***

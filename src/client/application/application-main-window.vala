@@ -420,6 +420,7 @@ public class Application.MainWindow :
 
 
     // Gemini sidebar
+    [GtkChild] private unowned Gtk.Paned conversation_gemini_paned;
     [GtkChild] private unowned Gtk.Revealer gemini_sidebar_revealer;
     [GtkChild] private unowned Gtk.Box gemini_sidebar_container;
 
@@ -2533,6 +2534,18 @@ public class Application.MainWindow :
         this.gemini_sidebar_revealer.visible = visible;
         this.gemini_sidebar_revealer.reveal_child = visible;
         this.conversation_headerbar.gemini_open = visible;
+
+        // Ensure paned position gives sidebar enough space
+        if (visible) {
+            // Set paned position to give sidebar 400px width
+            int window_width = this.get_allocated_width();
+            int sidebar_width = 480;
+            // Account for folder list and conversation list widths (approx 550px combined)
+            int target_position = window_width - sidebar_width - 50;
+            if (target_position > 0) {
+                this.conversation_gemini_paned.position = target_position;
+            }
+        }
     }
 
     private void on_show_window_menu() {

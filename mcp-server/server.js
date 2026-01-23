@@ -106,7 +106,7 @@ const TOOLS = [
   {
     name: "get_attachment_content",
     description:
-      "Get the content of a specific attachment from an email. For text-based attachments (text/*, JSON, XML, etc.), returns the content as text. For binary attachments (images, PDFs, etc.), returns base64-encoded content. Has a default 10MB size limit.",
+      "Get attachment content for AI analysis. SUPPORTED FILE TYPES: images (PNG, JPEG, GIF, WebP), PDFs, and text files. Returns file_path pointing to an accessible copy of the file that you can read directly. For text files, content is also included inline. For images and PDFs, read the file at file_path to analyze it. UNSUPPORTED types (ZIP, DOC, XLS, etc.) will return an error.",
     inputSchema: {
       type: "object",
       properties: {
@@ -122,7 +122,7 @@ const TOOLS = [
         max_size: {
           type: "number",
           description:
-            "Maximum size in bytes to return (default: 10MB, max: 50MB). Content larger than this will be truncated.",
+            "Maximum size in bytes for inline text content (default: 10MB).",
           default: 10485760,
         },
       },
