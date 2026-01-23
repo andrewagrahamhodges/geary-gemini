@@ -103,6 +103,32 @@ const TOOLS = [
       required: ["email_id"],
     },
   },
+  {
+    name: "get_attachment_content",
+    description:
+      "Get the content of a specific attachment from an email. For text-based attachments (text/*, JSON, XML, etc.), returns the content as text. For binary attachments (images, PDFs, etc.), returns base64-encoded content. Has a default 10MB size limit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        email_id: {
+          type: "string",
+          description: "The ID of the email containing the attachment",
+        },
+        attachment_index: {
+          type: "number",
+          description:
+            "The index of the attachment (0-based, as returned in the email's attachments array)",
+        },
+        max_size: {
+          type: "number",
+          description:
+            "Maximum size in bytes to return (default: 10MB, max: 50MB). Content larger than this will be truncated.",
+          default: 10485760,
+        },
+      },
+      required: ["email_id", "attachment_index"],
+    },
+  },
 ];
 
 // D-Bus connection and interface
@@ -178,6 +204,31 @@ async function handleToolCall(name, args) {
         success,
         message: success ? "Email selected" : "Email not found",
       };
+    }
+
+    case "get_attachment_content": {
+      if (!args?.email_id) {
+        return { error: "email_id is required" };
+      }
+      if (
+        args?.attachment_index === undefined ||
+        args?.attachment_index === null
+      ) {
+        return { error: "attachment_index is required" };
+      }
+      const maxSize = args?.max_size || 10485760; // 10MB default
+      const result = await tools.GetAttachmentContent(
+        args.email_id,
+        args.attachment_index,
+        maxSize,
+      );
+      const attachment = JSON.parse(result);
+
+      if (attachment.error) {
+        return { error: attachment.error };
+      }
+
+      return attachment;
     }
 
     default:

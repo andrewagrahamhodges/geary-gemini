@@ -307,11 +307,249 @@ public class Gemini.DBusService : GLib.Object {
         builder.set_member_name("body");
         builder.add_string_value(body);
 
+        // Add attachments metadata
+        builder.set_member_name("attachments");
+        builder.begin_array();
+
+        if (email.fields.fulfills(Geary.Email.REQUIRED_FOR_MESSAGE)) {
+            int index = 0;
+            foreach (Geary.Attachment attachment in email.attachments) {
+                builder.begin_object();
+
+                builder.set_member_name("index");
+                builder.add_int_value(index);
+
+                builder.set_member_name("filename");
+                builder.add_string_value(attachment.content_filename ?? "unnamed");
+
+                builder.set_member_name("content_type");
+                builder.add_string_value(attachment.content_type.get_mime_type());
+
+                builder.set_member_name("filesize");
+                builder.add_int_value(attachment.filesize);
+
+                builder.set_member_name("has_file");
+                builder.add_boolean_value(attachment.file != null);
+
+                builder.end_object();
+                index++;
+            }
+        }
+
+        builder.end_array();
+
         builder.end_object();
 
         var generator = new Json.Generator();
         generator.set_root(builder.get_root());
         return generator.to_data(null);
+    }
+
+    /**
+     * Get the content of a specific attachment from an email.
+     *
+     * @param email_id The ID of the email containing the attachment
+     * @param attachment_index The index of the attachment (0-based)
+     * @param max_size Maximum size in bytes to return (0 for default 10MB limit)
+     *
+     * Returns a JSON object with:
+     * - filename: The attachment filename
+     * - content_type: MIME type
+     * - filesize: Size in bytes
+     * - encoding: "text" or "base64"
+     * - content: The actual content (text or base64-encoded)
+     * - truncated: boolean indicating if content was truncated
+     * - error: Error message if failed
+     */
+    public string get_attachment_content(string email_id, int attachment_index, int64 max_size) throws DBusError, IOError {
+        var builder = new Json.Builder();
+        builder.begin_object();
+
+        // Default max size: 10MB
+        if (max_size <= 0) {
+            max_size = 10 * 1024 * 1024;
+        }
+
+        // Cap at 50MB absolute maximum
+        if (max_size > 50 * 1024 * 1024) {
+            max_size = 50 * 1024 * 1024;
+        }
+
+        if (this._main_window == null) {
+            builder.set_member_name("error");
+            builder.add_string_value("Main window not available");
+            builder.end_object();
+            var generator = new Json.Generator();
+            generator.set_root(builder.get_root());
+            return generator.to_data(null);
+        }
+
+        var conversations = this._main_window.conversations;
+        if (conversations == null) {
+            builder.set_member_name("error");
+            builder.add_string_value("No conversations available");
+            builder.end_object();
+            var generator = new Json.Generator();
+            generator.set_root(builder.get_root());
+            return generator.to_data(null);
+        }
+
+        // Find the email
+        Geary.Email? target_email = null;
+        foreach (var conversation in conversations.read_only_view) {
+            foreach (var email in conversation.get_emails(Geary.App.Conversation.Ordering.RECV_DATE_ASCENDING)) {
+                if (email.id.to_string() == email_id) {
+                    target_email = email;
+                    break;
+                }
+            }
+            if (target_email != null) break;
+        }
+
+        if (target_email == null) {
+            builder.set_member_name("error");
+            builder.add_string_value("Email not found: " + email_id);
+            builder.end_object();
+            var generator = new Json.Generator();
+            generator.set_root(builder.get_root());
+            return generator.to_data(null);
+        }
+
+        // Check if email has attachments loaded
+        if (!target_email.fields.fulfills(Geary.Email.REQUIRED_FOR_MESSAGE)) {
+            builder.set_member_name("error");
+            builder.add_string_value("Email body not loaded - attachments unavailable");
+            builder.end_object();
+            var generator = new Json.Generator();
+            generator.set_root(builder.get_root());
+            return generator.to_data(null);
+        }
+
+        // Validate attachment index
+        if (attachment_index < 0 || attachment_index >= target_email.attachments.size) {
+            builder.set_member_name("error");
+            builder.add_string_value("Invalid attachment index: " + attachment_index.to_string() +
+                " (email has " + target_email.attachments.size.to_string() + " attachments)");
+            builder.end_object();
+            var generator = new Json.Generator();
+            generator.set_root(builder.get_root());
+            return generator.to_data(null);
+        }
+
+        Geary.Attachment attachment = target_email.attachments.get(attachment_index);
+
+        // Add metadata
+        builder.set_member_name("filename");
+        builder.add_string_value(attachment.content_filename ?? "unnamed");
+
+        builder.set_member_name("content_type");
+        builder.add_string_value(attachment.content_type.get_mime_type());
+
+        builder.set_member_name("filesize");
+        builder.add_int_value(attachment.filesize);
+
+        // Check if file exists on disk
+        if (attachment.file == null) {
+            builder.set_member_name("error");
+            builder.add_string_value("Attachment not saved to disk");
+            builder.end_object();
+            var generator = new Json.Generator();
+            generator.set_root(builder.get_root());
+            return generator.to_data(null);
+        }
+
+        // Read the file content
+        try {
+            var file_buffer = new Geary.Memory.FileBuffer(attachment.file, true);
+            int64 actual_size = (int64) file_buffer.size;
+            bool truncated = actual_size > max_size;
+
+            builder.set_member_name("truncated");
+            builder.add_boolean_value(truncated);
+
+            // Determine if this is a text-based content type
+            string mime_type = attachment.content_type.get_mime_type();
+            bool is_text = is_text_content_type(mime_type);
+
+            if (is_text) {
+                builder.set_member_name("encoding");
+                builder.add_string_value("text");
+
+                string content = file_buffer.get_valid_utf8();
+                if (truncated && content.length > (long) max_size) {
+                    content = content.substring(0, (long) max_size);
+                }
+                builder.set_member_name("content");
+                builder.add_string_value(content);
+            } else {
+                builder.set_member_name("encoding");
+                builder.add_string_value("base64");
+
+                uint8[] data = file_buffer.get_uint8_array();
+                if (truncated) {
+                    data = data[0:(int)max_size];
+                }
+                string base64_content = GLib.Base64.encode(data);
+                builder.set_member_name("content");
+                builder.add_string_value(base64_content);
+            }
+
+        } catch (Error e) {
+            builder.set_member_name("error");
+            builder.add_string_value("Failed to read attachment: " + e.message);
+        }
+
+        builder.end_object();
+
+        var generator = new Json.Generator();
+        generator.set_root(builder.get_root());
+        return generator.to_data(null);
+    }
+
+    /**
+     * Check if a MIME type represents text content.
+     */
+    private bool is_text_content_type(string mime_type) {
+        // Text types
+        if (mime_type.has_prefix("text/")) {
+            return true;
+        }
+
+        // Common text-based application types
+        string[] text_app_types = {
+            "application/json",
+            "application/xml",
+            "application/javascript",
+            "application/x-javascript",
+            "application/ecmascript",
+            "application/x-sh",
+            "application/x-python",
+            "application/sql",
+            "application/xhtml+xml",
+            "application/atom+xml",
+            "application/rss+xml",
+            "application/soap+xml",
+            "application/mathml+xml",
+            "application/x-yaml",
+            "application/yaml",
+            "application/toml",
+            "application/x-httpd-php",
+            "application/x-perl",
+            "application/x-ruby"
+        };
+
+        foreach (string text_type in text_app_types) {
+            if (mime_type == text_type) {
+                return true;
+            }
+        }
+
+        // Check for +xml or +json suffixes
+        if (mime_type.has_suffix("+xml") || mime_type.has_suffix("+json")) {
+            return true;
+        }
+
+        return false;
     }
 
     /**

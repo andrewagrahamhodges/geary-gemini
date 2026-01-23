@@ -31,7 +31,7 @@ services:
         echo "=========================================="
         echo "CONFIGURE"
         echo "=========================================="
-        meson setup $$BUILD_DIR --prefix=/usr --buildtype=release -Dprofile=release
+        meson setup $$BUILD_DIR --prefix=/usr --buildtype=release -Dprofile=release -Dvaladoc=disabled
 
         echo "=========================================="
         echo "BUILD"
