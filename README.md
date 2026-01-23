@@ -338,6 +338,19 @@ sudo reboot
     - Tool items display with spinner while in progress, checkmark when complete
     - `get_tool_description()` parses tool input JSON for human-readable messages
     - `add_tool_item()`, `complete_current_tool()`, `clear_tool_items()` helper methods
+35. [x] **Fixed sidebar default width** (2026-01-23)
+    - Increased `gemini_sidebar_container` width_request from 280px to 360px
+    - Send button now visible when sidebar first opens
+36. [x] **Added attachment access for MCP server** (2026-01-23)
+    - Email JSON responses now include `attachments` array with metadata (index, filename, content_type, filesize, has_file)
+    - New `get_attachment_content()` D-Bus method reads attachment content
+    - Returns text for text-based types, base64 for binary (with size limits)
+    - Added `is_text_content_type()` helper for MIME type detection
+    - New `get_attachment_content` MCP tool for Gemini to access attachments
+    - Enables Gemini to summarize/translate email attachments
+37. [x] **Disabled valadoc in build** (2026-01-23)
+    - Added `-Dvaladoc=disabled` to meson setup in docker-compose.yml
+    - Fixes build failure caused by valadoc generation errors
 
 ### Next Steps
 
@@ -403,6 +416,12 @@ sudo reboot
 - `src/client/gemini/gemini-sidebar.vala` - Added thinking panel with tool activity: spinners, descriptions, completion states
 - `ui/gemini-sidebar.ui` - Added `thinking_content_box` for dynamic tool item display
 
+**Files Modified (2026-01-23) - Attachment Access & Sidebar Fix:**
+- `ui/application-main-window.ui` - Increased sidebar width_request from 280 to 360
+- `src/client/gemini/gemini-dbus-service.vala` - Added attachments to email JSON, `get_attachment_content()` method, `is_text_content_type()` helper
+- `mcp-server/server.js` - Added `get_attachment_content` tool definition and handler
+- `docker-compose.yml` - Added `-Dvaladoc=disabled` to meson setup
+
 ### Mental Context / Gotchas
 
 **Build System Gotchas:**
@@ -459,8 +478,16 @@ libgcr-4-dev, libgck-2-dev, libpeas-2-dev, gir1.2-peas-2
 pip: meson>=1.7,<1.10
 ```
 
+**Attachment Access Gotchas:**
+- Attachments are in `email.attachments` (Gee.List<Geary.Attachment>)
+- Attachment `file` property is a GLib.File - may be null if not saved to disk
+- Use `Geary.Memory.FileBuffer` to read attachment content
+- Text detection via MIME type: `text/*`, `application/json`, `+xml`, `+json` suffixes
+- Base64 encoding for binary attachments, text for text-based types
+- Size limits: default 10MB, max 50MB (configurable in `get_attachment_content`)
+
 ---
-*Last updated: 2026-01-21 (Session 2: Enhanced thinking panel)*
+*Last updated: 2026-01-23 (Session 3: Attachment access & sidebar fix)*
 
 ## Instructions for user
 ***The "Let's Pick This Up Again" Prompt***
