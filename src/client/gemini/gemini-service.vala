@@ -318,6 +318,10 @@ public class Gemini.Service : GLib.Object {
     private string build_chat_prompt(string message) {
         string lang = get_system_language_name();
         string system = SYSTEM_PROMPT.printf(lang);
+        string selected = build_selected_email_context();
+        if (selected.strip().length > 0) {
+            return "[System Instructions]\n%s\n\n%s\n[User Message]\n%s".printf(system, selected, message);
+        }
         return "[System Instructions]\n%s\n\n[User Message]\n%s".printf(system, message);
     }
 
@@ -335,7 +339,9 @@ public class Gemini.Service : GLib.Object {
      */
     public async string chat_streaming(string message, StructuredStreamCallback on_stream) throws Error {
         string full_prompt = build_chat_prompt(message);
-        return yield run_prompt(full_prompt);
+        return yield run_prompt(full_prompt, (line) => {
+            on_stream("message", line, null, null);
+        });
     }
 
     /**
