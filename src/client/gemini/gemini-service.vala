@@ -19,7 +19,6 @@ public class Gemini.Service : GLib.Object {
     // Bundled paths - installed by .deb package
     private const string NODE_BINARY = "/usr/share/geary-gemini/node/bin/node";
     private const string GEMINI_BINARY = "/usr/share/geary-gemini/node_modules/.bin/gemini";
-    private const string MCP_SERVER_PATH = "/usr/share/geary-gemini/mcp-server/server.js";
 
     // System prompt for Gemini chat - provides context and guardrails
     private const string SYSTEM_PROMPT =
@@ -68,93 +67,6 @@ public class Gemini.Service : GLib.Object {
      */
     public bool is_installed() {
         return FileUtils.test(GEMINI_BINARY, FileTest.EXISTS);
-    }
-
-    /**
-     * Configure gemini-cli MCP settings to include the Geary email tools server.
-     * This writes to ~/.gemini/settings.json
-     */
-    public void configure_mcp_server() {
-        string home = Environment.get_home_dir();
-        string gemini_dir = Path.build_filename(home, ".gemini");
-        string settings_path = Path.build_filename(gemini_dir, "settings.json");
-
-        // Create .gemini directory if it doesn't exist
-        var dir = File.new_for_path(gemini_dir);
-        try {
-            if (!dir.query_exists()) {
-                dir.make_directory_with_parents();
-            }
-        } catch (Error e) {
-            warning("Failed to create .gemini directory: %s", e.message);
-            return;
-        }
-
-        // Build the settings JSON with MCP server configuration
-        var builder = new Json.Builder();
-        builder.begin_object();
-
-        // Read existing settings if present
-        var settings_file = File.new_for_path(settings_path);
-        if (settings_file.query_exists()) {
-            try {
-                var parser = new Json.Parser();
-                parser.load_from_file(settings_path);
-                var root = parser.get_root();
-                if (root != null && root.get_node_type() == Json.NodeType.OBJECT) {
-                    var obj = root.get_object();
-                    // Copy existing members except mcpServers (we'll replace it)
-                    foreach (string member in obj.get_members()) {
-                        if (member != "mcpServers") {
-                            builder.set_member_name(member);
-                            builder.add_value(obj.get_member(member).copy());
-                        }
-                    }
-                }
-            } catch (Error e) {
-                debug("Could not read existing settings.json: %s", e.message);
-            }
-        }
-
-        // Add/update mcpServers configuration
-        builder.set_member_name("mcpServers");
-        builder.begin_object();
-        builder.set_member_name("geary");
-        builder.begin_object();
-        builder.set_member_name("command");
-        builder.add_string_value(NODE_BINARY);
-        builder.set_member_name("args");
-        builder.begin_array();
-        builder.add_string_value(MCP_SERVER_PATH);
-        builder.end_array();
-        // Pass D-Bus session address to subprocess so MCP server can connect
-        string? dbus_addr = Environment.get_variable("DBUS_SESSION_BUS_ADDRESS");
-        if (dbus_addr != null) {
-            builder.set_member_name("env");
-            builder.begin_object();
-            builder.set_member_name("DBUS_SESSION_BUS_ADDRESS");
-            builder.add_string_value(dbus_addr);
-            builder.end_object();
-        }
-        builder.set_member_name("timeout");
-        builder.add_int_value(10000);  // 10 second timeout
-        builder.end_object();
-        builder.end_object();
-
-        builder.end_object();
-
-        // Write settings file
-        var generator = new Json.Generator();
-        generator.set_pretty(true);
-        generator.set_indent(2);
-        generator.set_root(builder.get_root());
-
-        try {
-            generator.to_file(settings_path);
-            debug("MCP server configured in %s", settings_path);
-        } catch (Error e) {
-            warning("Failed to write gemini settings: %s", e.message);
-        }
     }
 
     /**
@@ -278,120 +190,6 @@ public class Gemini.Service : GLib.Object {
     }
 
     /**
-     * Run a prompt with MCP tools enabled and structured JSON streaming.
-     * Returns only the assistant's response text, filtering out tool use/thinking.
-     *
-     * @param prompt The user's message
-     * @param on_stream Callback for streaming updates (type + content)
-     * @return The assistant's final response text
-     */
-    public async string run_mcp_prompt(string prompt, StructuredStreamCallback? on_stream = null) throws Error {
-        if (!is_installed()) {
-            throw new IOError.NOT_FOUND(
-                "Gemini CLI is not installed. Please reinstall geary-gemini."
-            );
-        }
-
-        var subprocess = new Subprocess(
-            SubprocessFlags.STDIN_PIPE | SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE,
-            NODE_BINARY, GEMINI_BINARY,
-            "--output-format", "stream-json",
-            "--allowed-mcp-server-names", "geary",
-            "--yolo",
-            prompt
-        );
-
-        var stdout_stream = new DataInputStream(subprocess.get_stdout_pipe());
-        var response_builder = new StringBuilder();
-
-        try {
-            string? line;
-            while ((line = yield stdout_stream.read_line_async()) != null) {
-                // Skip non-JSON lines (deprecation warnings, status messages)
-                if (!line.has_prefix("{")) {
-                    continue;
-                }
-
-                // Parse the JSON line
-                var parser = new Json.Parser();
-                try {
-                    parser.load_from_data(line);
-                } catch (Error e) {
-                    continue;  // Skip invalid JSON
-                }
-
-                var root = parser.get_root();
-                if (root == null || root.get_node_type() != Json.NodeType.OBJECT) {
-                    continue;
-                }
-
-                var obj = root.get_object();
-                string msg_type = obj.has_member("type") ? obj.get_string_member("type") : "";
-
-                switch (msg_type) {
-                    case "tool_use":
-                        // Extract tool name and input data as JSON string
-                        string tool_name = obj.has_member("tool_name") ? obj.get_string_member("tool_name") : "tool";
-                        string? input_json = null;
-                        if (obj.has_member("input")) {
-                            var input_node = obj.get_member("input");
-                            if (input_node != null) {
-                                var gen = new Json.Generator();
-                                gen.set_root(input_node);
-                                input_json = gen.to_data(null);
-                            }
-                        }
-                        if (on_stream != null) {
-                            on_stream("tool_use", "", tool_name, input_json);
-                        }
-                        break;
-
-                    case "tool_result":
-                        // Show tool result status
-                        string status = obj.has_member("status") ? obj.get_string_member("status") : "";
-                        if (on_stream != null) {
-                            on_stream("tool_result", status, null, null);
-                        }
-                        break;
-
-                    case "message":
-                        // Only capture assistant messages for the final response
-                        string role = obj.has_member("role") ? obj.get_string_member("role") : "";
-                        if (role == "assistant" && obj.has_member("content")) {
-                            string content = obj.get_string_member("content");
-                            response_builder.append(content);
-                            if (on_stream != null) {
-                                on_stream("message", content, null, null);
-                            }
-                        }
-                        break;
-
-                    case "result":
-                        // Completion - ignore
-                        break;
-
-                    default:
-                        // Other types - pass through for display
-                        if (on_stream != null && msg_type.length > 0) {
-                            on_stream(msg_type, "", null, null);
-                        }
-                        break;
-                }
-            }
-        } catch (Error e) {
-            // Stream ended
-        }
-
-        yield subprocess.wait_async();
-
-        if (!subprocess.get_successful()) {
-            throw new IOError.FAILED("Gemini CLI error");
-        }
-
-        return response_builder.str;
-    }
-
-    /**
      * Translate text to the specified language.
      */
     public async string translate(string text, string target_language) throws Error {
@@ -449,17 +247,16 @@ public class Gemini.Service : GLib.Object {
      */
     public async string chat(string message) throws Error {
         string full_prompt = build_chat_prompt(message);
-        return yield run_mcp_prompt(full_prompt, null);
+        return yield run_prompt(full_prompt);
     }
 
     /**
-     * Send a chat message with structured streaming output.
-     * Uses MCP tools to access email data from Geary.
-     * The callback receives (msg_type, content) where msg_type is "tool_use", "tool_result", or "message".
+     * Send a chat message.
+     * Currently routes through plain gemini-cli prompt execution (no MCP tool stream).
      */
     public async string chat_streaming(string message, StructuredStreamCallback on_stream) throws Error {
         string full_prompt = build_chat_prompt(message);
-        return yield run_mcp_prompt(full_prompt, on_stream);
+        return yield run_prompt(full_prompt);
     }
 
     /**

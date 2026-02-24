@@ -61,11 +61,6 @@ services:
         npm install --prefix "$$GEMINI_DIR" @google/gemini-cli
         rm -rf "$$GEMINI_DIR/node/share" "$$GEMINI_DIR/node/include"
 
-        echo "Installing MCP server for email tools..."
-        mkdir -p "$$GEMINI_DIR/mcp-server"
-        cp /src/mcp-server/package.json "$$GEMINI_DIR/mcp-server/"
-        cp /src/mcp-server/server.js "$$GEMINI_DIR/mcp-server/"
-        npm install --prefix "$$GEMINI_DIR/mcp-server" --omit=dev
 
         VERSION=$$(grep -m1 "version:" /src/meson.build | cut -d"'" -f2)
         mkdir -p $$STAGING/DEBIAN
