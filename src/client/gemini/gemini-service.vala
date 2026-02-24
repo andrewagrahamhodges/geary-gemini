@@ -20,36 +20,21 @@ public class Gemini.Service : GLib.Object {
     private const string NODE_BINARY = "/usr/share/geary-gemini/node/bin/node";
     private const string GEMINI_BINARY = "/usr/share/geary-gemini/node_modules/.bin/gemini";
 
-    // System prompt for Gemini chat - provides context and guardrails
+    // System prompt for Gemini chat - direct context mode (no MCP).
     private const string SYSTEM_PROMPT =
         "You are an AI assistant integrated into the Geary email client. You help users with their emails.\n\n" +
         "IMPORTANT DEFAULTS:\n" +
         "- When asked to translate, ALWAYS translate to %s (the user's system language) unless they specify otherwise\n" +
-        "- When the user says \"the email\", \"this email\", or \"selected email\", use get_selected_email to retrieve it\n" +
         "- Assume questions are about the currently selected email unless the user asks about other emails\n" +
-        "- When translating or summarizing, get the selected email first, then process it\n\n" +
-        "FORMATTING:\n" +
-        "- Use markdown formatting to make responses clear and readable\n" +
-        "- Use **bold** for emphasis and important terms\n" +
-        "- Use *italic* for titles, names, or subtle emphasis\n" +
-        "- Use `code` for technical terms, email addresses, or IDs\n" +
-        "- Use bullet lists (- item) for multiple points\n" +
-        "- Use ## headers for sections in longer responses\n\n" +
+        "- Use provided email and attachment context if present\n\n" +
+        "ATTACHMENTS:\n" +
+        "- If attachment text is provided, use it\n" +
+        "- If an attachment is listed as unavailable, state that limitation clearly\n" +
+        "- Never hallucinate attachment contents\n\n" +
         "RESPONSE STYLE:\n" +
         "- Give direct, concise responses\n" +
-        "- Do NOT explain your thought process or what steps you're taking\n" +
-        "- Do NOT say things like \"I will now...\", \"Let me...\", \"First I'll...\"\n" +
-        "- Just provide the result directly (translation, summary, answer, etc.)\n" +
-        "- If you need clarification, ask a brief question\n\n" +
-        "AVAILABLE TOOLS:\n" +
-        "- list_emails: List emails in the current folder\n" +
-        "- get_selected_email: Get the currently selected email\n" +
-        "- read_email: Read a specific email by ID\n" +
-        "- search_emails: Search emails\n" +
-        "- select_email: Select an email in the UI\n\n" +
-        "RESTRICTIONS:\n" +
-        "- You can only access emails through the provided tools\n" +
-        "- You cannot send, delete, or modify emails\n" +
+        "- Use markdown lightly (bullets and bold for important points)\n" +
+        "- Do NOT explain internal reasoning\n" +
         "- Focus only on email-related tasks";
 
     /**
@@ -232,6 +217,101 @@ public class Gemini.Service : GLib.Object {
         return yield run_prompt(prompt);
     }
 
+
+    private string truncate_for_prompt(string text, int max_chars) {
+        if (text == null) return "";
+        if (text.length <= max_chars) return text;
+        return text.substring(0, max_chars) + "
+...[truncated]";
+    }
+
+    private string build_selected_email_context() {
+        var app = GLib.Application.get_default() as Application.Client;
+        if (app == null) return "";
+
+        var window = app.get_active_main_window();
+        if (window == null || window.conversation_viewer == null) return "";
+
+        var list = window.conversation_viewer.current_list;
+        if (list == null) return "";
+
+        var email_view = list.get_reply_target();
+        if (email_view == null || email_view.email == null) return "";
+
+        var email = email_view.email;
+        var ctx = new StringBuilder();
+        ctx.append("[Selected Email Context]
+");
+        ctx.append("Subject: %s
+".printf(email.subject != null ? email.subject.to_string() : ""));
+        ctx.append("From: %s
+".printf(email.from != null ? email.from.to_string() : ""));
+        ctx.append("To: %s
+".printf(email.to != null ? email.to.to_string() : ""));
+        ctx.append("Date: %s
+
+".printf(email.date != null ? email.date.to_string() : ""));
+
+        string body = email.get_preview_as_string() ?? "";
+        try {
+            if (email.fields.fulfills(Geary.Email.REQUIRED_FOR_MESSAGE)) {
+                var message = email.get_message();
+                string? searchable = message.get_searchable_body(true);
+                if (searchable != null && searchable.strip().length > 0) {
+                    body = searchable;
+                }
+            }
+        } catch (Error e) {
+            debug("Failed to get full email body: %s", e.message);
+        }
+
+        ctx.append("Body:
+%s
+
+".printf(truncate_for_prompt(body, 12000)));
+
+        if (email.attachments != null && email.attachments.size > 0) {
+            ctx.append("[Attachments]
+");
+            int index = 1;
+            foreach (var attachment in email.attachments) {
+                string name = attachment.file != null ? attachment.file.get_basename() : "attachment";
+                string mime = attachment.content_type != null ? attachment.content_type.to_string() : "unknown";
+                ctx.append("%d. %s (%s)
+".printf(index, name, mime));
+
+                bool extracted = false;
+                if (attachment.file != null && mime.has_prefix("text/")) {
+                    try {
+                        uint8[] bytes;
+                        string? etag;
+                        if (attachment.file.load_contents(null, out bytes, out etag)) {
+                            string text = (string) bytes;
+                            if (text != null && text.strip().length > 0) {
+                                ctx.append("Extracted text:
+%s
+
+".printf(truncate_for_prompt(text, 6000)));
+                                extracted = true;
+                            }
+                        }
+                    } catch (Error e) {
+                        debug("Attachment text extraction failed: %s", e.message);
+                    }
+                }
+
+                if (!extracted) {
+                    ctx.append("Extracted text: [unavailable]
+
+");
+                }
+                index++;
+            }
+        }
+
+        return ctx.str;
+    }
+
     /**
      * Build the full prompt with system instructions.
      */
@@ -243,7 +323,6 @@ public class Gemini.Service : GLib.Object {
 
     /**
      * Send a chat message and get a response.
-     * Uses MCP tools to access email data from Geary.
      */
     public async string chat(string message) throws Error {
         string full_prompt = build_chat_prompt(message);
