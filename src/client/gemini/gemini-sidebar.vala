@@ -31,6 +31,7 @@ public class Gemini.Sidebar : Gtk.Bin {
 
     private bool is_processing = false;
     private Gtk.Box? current_tool_item = null;
+    private Gtk.Label? thinking_message_label = null;
 
     static construct {
         set_css_name("gemini-sidebar");
@@ -217,8 +218,9 @@ public class Gemini.Sidebar : Gtk.Bin {
                 break;
 
             case "message":
-                // Assistant response streaming - update header
+                // Assistant response streaming - update header and show content snippets
                 this.loading_label.label = _("Composing response...");
+                append_thinking_content(content);
                 break;
 
             default:
@@ -368,6 +370,32 @@ public class Gemini.Sidebar : Gtk.Bin {
             this.thinking_content_box.remove(child);
         }
         this.current_tool_item = null;
+        this.thinking_message_label = null;
+    }
+
+    private void append_thinking_content(string content) {
+        string text = content.strip();
+        if (text.length == 0) return;
+
+        if (this.thinking_message_label == null) {
+            this.thinking_message_label = new Gtk.Label("");
+            this.thinking_message_label.visible = true;
+            this.thinking_message_label.xalign = 0;
+            this.thinking_message_label.wrap = true;
+            this.thinking_message_label.wrap_mode = Pango.WrapMode.WORD_CHAR;
+            this.thinking_message_label.selectable = true;
+            this.thinking_message_label.get_style_context().add_class("dim-label");
+            this.thinking_content_box.pack_start(this.thinking_message_label, false, false, 0);
+            this.thinking_content_box.reorder_child(this.thinking_message_label, 0);
+        }
+
+        string current = this.thinking_message_label.label ?? "";
+        string merged = current.length > 0 ? "%s
+%s".printf(current, text) : text;
+        if (merged.length > 1000) {
+            merged = merged.substring(merged.length - 1000);
+        }
+        this.thinking_message_label.label = merged;
     }
 
     /**

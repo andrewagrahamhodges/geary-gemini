@@ -492,3 +492,8 @@ The State Dump: Move finished 'Next Steps' to 'Recent Accomplishments' and defin
 Mental Context: Note any 'gotchas' or specific patterns we established today that I should remember next time.
 
 Summarize what you updated, then we are done for the day."
+
+
+## GEARY Agent Skill
+
+See  for the in-app Gemini behavior contract and response rules.
