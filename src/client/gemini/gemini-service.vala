@@ -96,8 +96,13 @@ public class Gemini.Service : GLib.Object {
         yield subprocess.wait_async();
 
         if (!subprocess.get_successful()) {
-            authentication_completed(false, "Authentication failed");
-            throw new IOError.FAILED("Authentication failed");
+            // Some gemini-cli versions emit "Loaded cached credentials" and exit non-zero.
+            // Treat as success if auth status is already valid.
+            bool authed = yield check_authenticated();
+            if (!authed) {
+                authentication_completed(false, "Authentication failed");
+                throw new IOError.FAILED("Authentication failed");
+            }
         }
 
         authentication_completed(true, null);
@@ -133,6 +138,7 @@ public class Gemini.Service : GLib.Object {
             // Ignore Node deprecation noise from dependency chains
             if (line.contains("[DEP0040]") ||
                 line.contains("The punycode module is deprecated") ||
+                line.contains("Loaded cached credentials") ||
                 line.has_prefix("(Use `node --trace-deprecation") ||
                 line.has_prefix("(node:")) {
                 continue;
