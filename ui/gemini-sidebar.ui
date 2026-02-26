@@ -6,7 +6,7 @@
       <object class="GtkBox" id="main_box">
         <property name="visible">True</property>
         <property name="orientation">vertical</property>
-        <property name="width_request">320</property>
+        <property name="width_request">420</property>
         <style>
           <class name="gemini-sidebar"/>
         </style>
@@ -23,7 +23,7 @@
             <child>
               <object class="GtkImage" id="gemini_icon">
                 <property name="visible">True</property>
-                <property name="icon_name">starred-symbolic</property>
+                <property name="icon_name">avatar-default-symbolic</property>
                 <property name="icon_size">1</property>
               </object>
             </child>
@@ -189,6 +189,7 @@
                 <property name="vscrollbar_policy">automatic</property>
                 <property name="hscrollbar_policy">never</property>
                 <property name="min_content_height">32</property>
+                <property name="min_content_width">140</property>
                 <property name="max_content_height">80</property>
                 <style>
                   <class name="frame"/>
@@ -212,6 +213,8 @@
                 <property name="sensitive">False</property>
                 <property name="valign">end</property>
                 <property name="tooltip_text" translatable="yes">Send message (Ctrl+Enter)</property>
+                <property name="always_show_image">True</property>
+                <property name="width_request">40</property>
                 <child>
                   <object class="GtkImage">
                     <property name="visible">True</property>
