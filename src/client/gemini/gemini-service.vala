@@ -63,8 +63,11 @@ public class Gemini.Service : GLib.Object {
         }
 
         try {
-            var subprocess = new Subprocess(
-                SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE,
+            var launcher = new SubprocessLauncher(
+                SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE
+            );
+            launcher.setenv("NODE_NO_WARNINGS", "1", true);
+            var subprocess = launcher.spawn(
                 NODE_BINARY, GEMINI_BINARY, "auth", "status"
             );
             yield subprocess.wait_async();
@@ -82,8 +85,11 @@ public class Gemini.Service : GLib.Object {
             throw new IOError.NOT_FOUND("Gemini CLI is not installed. Please reinstall geary-gemini.");
         }
 
-        var subprocess = new Subprocess(
-            SubprocessFlags.NONE,  // Interactive - opens browser
+        var launcher = new SubprocessLauncher(
+            SubprocessFlags.NONE  // Interactive - opens browser
+        );
+        launcher.setenv("NODE_NO_WARNINGS", "1", true);
+        var subprocess = launcher.spawn(
             NODE_BINARY, GEMINI_BINARY, "auth", "login"
         );
 
@@ -112,6 +118,33 @@ public class Gemini.Service : GLib.Object {
      */
     public delegate void StructuredStreamCallback(string msg_type, string content, string? tool_name, string? tool_input_json);
 
+    private string filter_non_fatal_warnings(string? stderr_text) {
+        if (stderr_text == null || stderr_text.length == 0) {
+            return "";
+        }
+
+        var kept = new StringBuilder();
+        foreach (string raw_line in stderr_text.split("\n")) {
+            string line = raw_line.strip();
+            if (line.length == 0) {
+                continue;
+            }
+
+            // Ignore Node deprecation noise from dependency chains
+            if (line.contains("[DEP0040]") ||
+                line.contains("The punycode module is deprecated") ||
+                line.has_prefix("(Use `node --trace-deprecation") ||
+                line.has_prefix("(node:")) {
+                continue;
+            }
+
+            kept.append(line);
+            kept.append("\n");
+        }
+
+        return kept.str.strip();
+    }
+
     /**
      * Run a prompt through gemini-cli and return the response.
      */
@@ -122,8 +155,11 @@ public class Gemini.Service : GLib.Object {
             );
         }
 
-        var subprocess = new Subprocess(
-            SubprocessFlags.STDIN_PIPE | SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE,
+        var launcher = new SubprocessLauncher(
+            SubprocessFlags.STDIN_PIPE | SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE
+        );
+        launcher.setenv("NODE_NO_WARNINGS", "1", true);
+        var subprocess = launcher.spawn(
             NODE_BINARY, GEMINI_BINARY, "-p", prompt
         );
 
@@ -160,14 +196,24 @@ public class Gemini.Service : GLib.Object {
             yield subprocess.communicate_utf8_async(null, null, out stdout_buf, out stderr_buf);
         }
 
+        string stderr_clean = filter_non_fatal_warnings(stderr_buf);
+
         if (!subprocess.get_successful()) {
             // Check if auth error
-            if (stderr_buf != null && "auth" in stderr_buf.down()) {
+            if (stderr_clean.length > 0 && "auth" in stderr_clean.down()) {
                 authentication_required();
                 throw new IOError.PERMISSION_DENIED("Please login with Google first");
             }
+
+            // Non-fatal warning-only stderr: return stdout if we have it
+            if (stderr_clean.length == 0 && stdout_buf != null && stdout_buf.strip().length > 0) {
+                return stdout_buf;
+            }
+
             throw new IOError.FAILED(
-                "Gemini CLI error: %s".printf(stderr_buf ?? "unknown error")
+                "Gemini CLI error: %s".printf(
+                    stderr_clean.length > 0 ? stderr_clean : "unknown error"
+                )
             );
         }
 
