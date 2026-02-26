@@ -142,16 +142,21 @@ public class Gemini.Sidebar : Gtk.Bin {
     }
 
     /**
-     * Handle key press in text view - Ctrl+Enter sends the message.
+     * Handle key press in text view.
+     * Enter sends, Ctrl+Enter inserts a newline.
      */
     private bool on_text_key_press(Gdk.EventKey event) {
-        // Ctrl+Enter sends the message
-        if ((event.state & Gdk.ModifierType.CONTROL_MASK) != 0 &&
-            (event.keyval == Gdk.Key.Return || event.keyval == Gdk.Key.KP_Enter)) {
+        if (event.keyval == Gdk.Key.Return || event.keyval == Gdk.Key.KP_Enter) {
+            bool ctrl_pressed = (event.state & Gdk.ModifierType.CONTROL_MASK) != 0;
+            if (ctrl_pressed) {
+                return false; // default behavior: insert newline
+            }
+
             on_send_clicked();
-            return true;  // Event handled
+            return true; // consume Enter-to-send
         }
-        return false;  // Let normal handling continue (Enter adds newline)
+
+        return false;
     }
 
     private void on_send_clicked() {
@@ -310,12 +315,14 @@ public class Gemini.Sidebar : Gtk.Bin {
         name_label.attributes = attrs;
         item_box.pack_start(name_label, false, false, 0);
 
-        // Description (dimmed)
+        // Description (dimmed, wraps in expanded details pane)
         var desc_label = new Gtk.Label(description);
         desc_label.visible = true;
         desc_label.xalign = 0;
         desc_label.hexpand = true;
-        desc_label.ellipsize = Pango.EllipsizeMode.END;
+        desc_label.wrap = true;
+        desc_label.wrap_mode = Pango.WrapMode.WORD_CHAR;
+        desc_label.max_width_chars = 48;
         desc_label.get_style_context().add_class("dim-label");
         var desc_attrs = new Pango.AttrList();
         desc_attrs.insert(Pango.attr_scale_new(0.9));
