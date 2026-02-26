@@ -47,6 +47,39 @@ public class Gemini.Service : GLib.Object {
      */
     public signal void authentication_completed(bool success, string? error_message);
 
+
+    private string? extract_first_url(string? text) {
+        if (text == null || text.length == 0) {
+            return null;
+        }
+
+        try {
+            var regex = new Regex("(https?://[^\s]+)");
+            MatchInfo info;
+            if (regex.match(text, 0, out info)) {
+                return info.fetch(1);
+            }
+        } catch (RegexError e) {
+            // Ignore regex errors
+        }
+
+        return null;
+    }
+
+    private bool open_auth_url(string? url) {
+        if (url == null || url.length == 0) {
+            return false;
+        }
+
+        try {
+            AppInfo.launch_default_for_uri(url, null);
+            return true;
+        } catch (Error e) {
+            warning("Failed to open auth URL: %s", e.message);
+            return false;
+        }
+    }
+
     /**
      * Check if gemini-cli is installed (bundled with the package).
      */
@@ -86,22 +119,40 @@ public class Gemini.Service : GLib.Object {
         }
 
         var launcher = new SubprocessLauncher(
-            SubprocessFlags.NONE  // Interactive - opens browser
+            SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE
         );
         launcher.setenv("NODE_NO_WARNINGS", "1", true);
         var subprocess = launcher.spawn(
             NODE_BINARY, GEMINI_BINARY, "auth", "login"
         );
 
-        yield subprocess.wait_async();
+        string? stdout_buf = null;
+        string? stderr_buf = null;
+        yield subprocess.communicate_utf8_async(null, null, out stdout_buf, out stderr_buf);
+
+        string combined = "%s
+%s".printf(stdout_buf ?? "", stderr_buf ?? "");
+        string? auth_url = extract_first_url(combined);
+        if (auth_url != null) {
+            open_auth_url(auth_url);
+        }
 
         if (!subprocess.get_successful()) {
             // Some gemini-cli versions emit "Loaded cached credentials" and exit non-zero.
             // Treat as success if auth status is already valid.
             bool authed = yield check_authenticated();
             if (!authed) {
-                authentication_completed(false, "Authentication failed");
-                throw new IOError.FAILED("Authentication failed");
+                string cleaned = filter_non_fatal_warnings(combined);
+                string msg;
+                if (auth_url != null) {
+                    msg = "Authentication failed. Open this URL to continue login: %s".printf(auth_url);
+                } else if (cleaned.length > 0) {
+                    msg = "Authentication failed: %s".printf(cleaned);
+                } else {
+                    msg = "Authentication failed";
+                }
+                authentication_completed(false, msg);
+                throw new IOError.FAILED(msg);
             }
         }
 
