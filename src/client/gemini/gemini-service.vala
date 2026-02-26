@@ -54,7 +54,7 @@ public class Gemini.Service : GLib.Object {
         }
 
         try {
-            var regex = new Regex("(https?://[^\s]+)");
+            var regex = new Regex("(https?://[^\\s]+)");
             MatchInfo info;
             if (regex.match(text, 0, out info)) {
                 return info.fetch(1);
