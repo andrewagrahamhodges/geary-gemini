@@ -142,16 +142,21 @@ public class Gemini.Sidebar : Gtk.Bin {
     }
 
     /**
-     * Handle key press in text view - Ctrl+Enter sends the message.
+     * Handle key press in text view.
+     * Enter sends, Ctrl+Enter inserts a newline.
      */
     private bool on_text_key_press(Gdk.EventKey event) {
-        // Ctrl+Enter sends the message
-        if ((event.state & Gdk.ModifierType.CONTROL_MASK) != 0 &&
-            (event.keyval == Gdk.Key.Return || event.keyval == Gdk.Key.KP_Enter)) {
+        if (event.keyval == Gdk.Key.Return || event.keyval == Gdk.Key.KP_Enter) {
+            bool ctrl_pressed = (event.state & Gdk.ModifierType.CONTROL_MASK) != 0;
+            if (ctrl_pressed) {
+                return false; // default behavior: insert newline
+            }
+
             on_send_clicked();
-            return true;  // Event handled
+            return true; // consume Enter-to-send
         }
-        return false;  // Let normal handling continue (Enter adds newline)
+
+        return false;
     }
 
     private void on_send_clicked() {
@@ -310,12 +315,14 @@ public class Gemini.Sidebar : Gtk.Bin {
         name_label.attributes = attrs;
         item_box.pack_start(name_label, false, false, 0);
 
-        // Description (dimmed)
+        // Description (dimmed, wraps in expanded details pane)
         var desc_label = new Gtk.Label(description);
         desc_label.visible = true;
         desc_label.xalign = 0;
         desc_label.hexpand = true;
-        desc_label.ellipsize = Pango.EllipsizeMode.END;
+        desc_label.wrap = true;
+        desc_label.wrap_mode = Pango.WrapMode.WORD_CHAR;
+        desc_label.max_width_chars = 48;
         desc_label.get_style_context().add_class("dim-label");
         var desc_attrs = new Pango.AttrList();
         desc_attrs.insert(Pango.attr_scale_new(0.9));
@@ -390,10 +397,9 @@ public class Gemini.Sidebar : Gtk.Bin {
         }
 
         string current = this.thinking_message_label.label ?? "";
-        string merged = current.length > 0 ? "%s
-%s".printf(current, text) : text;
+        string merged = current.length > 0 ? "%s\n%s".printf(current, text) : text;
         if (merged.length > 1000) {
-            merged = merged.substring(merged.length - 1000);
+            merged = "…" + merged.substring(merged.length - 999);
         }
         this.thinking_message_label.label = merged;
     }
@@ -402,7 +408,7 @@ public class Gemini.Sidebar : Gtk.Bin {
      * Convert markdown text to Pango markup for rendering in GTK labels.
      * Supports: **bold**, *italic*, `code`, ## headers, - lists
      */
-    private string markdown_to_pango(string markdown) {
+    internal string markdown_to_pango(string markdown) {
         // First escape any existing markup characters to prevent injection
         string result = GLib.Markup.escape_text(markdown);
 
@@ -441,10 +447,17 @@ public class Gemini.Sidebar : Gtk.Bin {
             // Ignore regex errors
         }
 
-        // Italic: *text* -> <i>text</i> (but not inside bold)
+        // Italic: *text* or _text_ -> <i>text</i>
+        // Bold is already replaced, so single * pairs are safe to match
         try {
-            var italic_regex = new Regex("(?<!\\*)\\*([^*]+)\\*(?!\\*)");
+            var italic_regex = new Regex("\\*([^*]+)\\*");
             result = italic_regex.replace(result, -1, 0, "<i>\\1</i>");
+        } catch (RegexError e) {
+            // Ignore regex errors
+        }
+        try {
+            var italic_underscore_regex = new Regex("(?<![\\w])_([^_]+)_(?![\\w])");
+            result = italic_underscore_regex.replace(result, -1, 0, "<i>\\1</i>");
         } catch (RegexError e) {
             // Ignore regex errors
         }

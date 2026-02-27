@@ -47,6 +47,39 @@ public class Gemini.Service : GLib.Object {
      */
     public signal void authentication_completed(bool success, string? error_message);
 
+
+    internal string? extract_first_url(string? text) {
+        if (text == null || text.length == 0) {
+            return null;
+        }
+
+        try {
+            var regex = new Regex("(https?://[^\\s<>\"']+[^\\s<>\"'.,;:!?\\)\\]])");
+            MatchInfo info;
+            if (regex.match(text, 0, out info)) {
+                return info.fetch(1);
+            }
+        } catch (RegexError e) {
+            // Ignore regex errors
+        }
+
+        return null;
+    }
+
+    private bool open_auth_url(string? url) {
+        if (url == null || url.length == 0) {
+            return false;
+        }
+
+        try {
+            AppInfo.launch_default_for_uri(url, null);
+            return true;
+        } catch (Error e) {
+            warning("Failed to open auth URL: %s", e.message);
+            return false;
+        }
+    }
+
     /**
      * Check if gemini-cli is installed (bundled with the package).
      */
@@ -63,8 +96,11 @@ public class Gemini.Service : GLib.Object {
         }
 
         try {
-            var subprocess = new Subprocess(
-                SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE,
+            var launcher = new SubprocessLauncher(
+                SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE
+            );
+            launcher.setenv("NODE_NO_WARNINGS", "1", true);
+            var subprocess = launcher.spawn(
                 NODE_BINARY, GEMINI_BINARY, "auth", "status"
             );
             yield subprocess.wait_async();
@@ -82,16 +118,42 @@ public class Gemini.Service : GLib.Object {
             throw new IOError.NOT_FOUND("Gemini CLI is not installed. Please reinstall geary-gemini.");
         }
 
-        var subprocess = new Subprocess(
-            SubprocessFlags.NONE,  // Interactive - opens browser
+        var launcher = new SubprocessLauncher(
+            SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE
+        );
+        launcher.setenv("NODE_NO_WARNINGS", "1", true);
+        var subprocess = launcher.spawn(
             NODE_BINARY, GEMINI_BINARY, "auth", "login"
         );
 
-        yield subprocess.wait_async();
+        string? stdout_buf = null;
+        string? stderr_buf = null;
+        yield subprocess.communicate_utf8_async(null, null, out stdout_buf, out stderr_buf);
+
+        string combined = "%s
+%s".printf(stdout_buf ?? "", stderr_buf ?? "");
+        string? auth_url = extract_first_url(combined);
+        if (auth_url != null) {
+            open_auth_url(auth_url);
+        }
 
         if (!subprocess.get_successful()) {
-            authentication_completed(false, "Authentication failed");
-            throw new IOError.FAILED("Authentication failed");
+            // Some gemini-cli versions emit "Loaded cached credentials" and exit non-zero.
+            // Treat as success if auth status is already valid.
+            bool authed = yield check_authenticated();
+            if (!authed) {
+                string cleaned = filter_non_fatal_warnings(combined);
+                string msg;
+                if (auth_url != null) {
+                    msg = "Authentication failed. Open this URL to continue login: %s".printf(auth_url);
+                } else if (cleaned.length > 0) {
+                    msg = "Authentication failed: %s".printf(cleaned);
+                } else {
+                    msg = "Authentication failed";
+                }
+                authentication_completed(false, msg);
+                throw new IOError.FAILED(msg);
+            }
         }
 
         authentication_completed(true, null);
@@ -112,6 +174,34 @@ public class Gemini.Service : GLib.Object {
      */
     public delegate void StructuredStreamCallback(string msg_type, string content, string? tool_name, string? tool_input_json);
 
+    internal string filter_non_fatal_warnings(string? stderr_text) {
+        if (stderr_text == null || stderr_text.length == 0) {
+            return "";
+        }
+
+        var kept = new StringBuilder();
+        foreach (string raw_line in stderr_text.split("\n")) {
+            string line = raw_line.strip();
+            if (line.length == 0) {
+                continue;
+            }
+
+            // Ignore Node deprecation noise from dependency chains
+            if (line.contains("[DEP0040]") ||
+                line.contains("The punycode module is deprecated") ||
+                line.contains("Loaded cached credentials") ||
+                line.has_prefix("(Use `node --trace-deprecation") ||
+                line.has_prefix("(node:")) {
+                continue;
+            }
+
+            kept.append(line);
+            kept.append("\n");
+        }
+
+        return kept.str.strip();
+    }
+
     /**
      * Run a prompt through gemini-cli and return the response.
      */
@@ -122,10 +212,19 @@ public class Gemini.Service : GLib.Object {
             );
         }
 
-        var subprocess = new Subprocess(
-            SubprocessFlags.STDIN_PIPE | SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE,
-            NODE_BINARY, GEMINI_BINARY, "-p", prompt
+        var launcher = new SubprocessLauncher(
+            SubprocessFlags.STDIN_PIPE | SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE
         );
+        launcher.setenv("NODE_NO_WARNINGS", "1", true);
+        var subprocess = launcher.spawn(
+            NODE_BINARY, GEMINI_BINARY, "-p", "-"
+        );
+
+        // Write prompt via stdin to avoid exposing email content in /proc/cmdline
+        var stdin_stream = subprocess.get_stdin_pipe();
+        var prompt_bytes = new GLib.Bytes(prompt.data);
+        yield stdin_stream.write_bytes_async(prompt_bytes);
+        yield stdin_stream.close_async();
 
         string? stdout_buf = null;
         string? stderr_buf = null;
@@ -147,12 +246,18 @@ public class Gemini.Service : GLib.Object {
                 // Stream ended
             }
 
-            // Read any stderr
+            // Read all stderr lines
+            var stderr_builder = new StringBuilder();
             try {
-                stderr_buf = yield stderr_stream.read_line_async();
+                string? err_line;
+                while ((err_line = yield stderr_stream.read_line_async()) != null) {
+                    stderr_builder.append(err_line);
+                    stderr_builder.append("\n");
+                }
             } catch (Error e) {
-                // Ignore
+                // Stream ended
             }
+            stderr_buf = stderr_builder.str;
 
             yield subprocess.wait_async();
             stdout_buf = output_builder.str;
@@ -160,14 +265,24 @@ public class Gemini.Service : GLib.Object {
             yield subprocess.communicate_utf8_async(null, null, out stdout_buf, out stderr_buf);
         }
 
+        string stderr_clean = filter_non_fatal_warnings(stderr_buf);
+
         if (!subprocess.get_successful()) {
             // Check if auth error
-            if (stderr_buf != null && "auth" in stderr_buf.down()) {
+            if (stderr_clean.length > 0 && "auth" in stderr_clean.down()) {
                 authentication_required();
                 throw new IOError.PERMISSION_DENIED("Please login with Google first");
             }
+
+            // Non-fatal warning-only stderr: return stdout if we have it
+            if (stderr_clean.length == 0 && stdout_buf != null && stdout_buf.strip().length > 0) {
+                return stdout_buf;
+            }
+
             throw new IOError.FAILED(
-                "Gemini CLI error: %s".printf(stderr_buf ?? "unknown error")
+                "Gemini CLI error: %s".printf(
+                    stderr_clean.length > 0 ? stderr_clean : "unknown error"
+                )
             );
         }
 
@@ -218,7 +333,7 @@ public class Gemini.Service : GLib.Object {
     }
 
 
-    private string truncate_for_prompt(string text, int max_chars) {
+    internal string truncate_for_prompt(string text, int max_chars) {
         if (text == null) return "";
         if (text.length <= max_chars) return text;
         return text.substring(0, max_chars) + "
