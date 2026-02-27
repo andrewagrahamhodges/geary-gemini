@@ -28,14 +28,49 @@
               </object>
             </child>
             <child>
-              <object class="GtkLabel" id="title_label">
+              <object class="GtkBox" id="title_box">
                 <property name="visible">True</property>
-                <property name="label" translatable="yes">Gemini AI</property>
+                <property name="orientation">vertical</property>
                 <property name="hexpand">True</property>
-                <property name="xalign">0</property>
-                <attributes>
-                  <attribute name="weight" value="bold"/>
-                </attributes>
+                <child>
+                  <object class="GtkLabel" id="title_label">
+                    <property name="visible">True</property>
+                    <property name="label" translatable="yes">Gemini AI</property>
+                    <property name="xalign">0</property>
+                    <attributes>
+                      <attribute name="weight" value="bold"/>
+                    </attributes>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="account_label">
+                    <property name="visible">False</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                    <attributes>
+                      <attribute name="scale" value="0.85"/>
+                    </attributes>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkMenuButton" id="account_menu_button">
+                <property name="visible">True</property>
+                <property name="valign">center</property>
+                <property name="tooltip_text" translatable="yes">Select Google account for Gemini</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="visible">True</property>
+                    <property name="icon_name">emblem-system-symbolic</property>
+                    <property name="icon_size">1</property>
+                  </object>
+                </child>
+                <style>
+                  <class name="flat"/>
+                </style>
               </object>
             </child>
           </object>
@@ -68,7 +103,7 @@
                 </child>
                 <child>
                   <object class="GtkButton" id="login_button">
-                    <property name="visible">True</property>
+                    <property name="visible">False</property>
                     <property name="label" translatable="yes">Login with Google</property>
                     <property name="halign">start</property>
                     <style>

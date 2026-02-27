@@ -20,6 +20,8 @@ public class Gemini.Sidebar : Gtk.Bin {
     [GtkChild] private unowned Gtk.Revealer status_revealer;
     [GtkChild] private unowned Gtk.Label status_label;
     [GtkChild] private unowned Gtk.Button login_button;
+    [GtkChild] private unowned Gtk.Label account_label;
+    [GtkChild] private unowned Gtk.MenuButton account_menu_button;
     [GtkChild] private unowned Gtk.ScrolledWindow chat_scrolled;
     [GtkChild] private unowned Gtk.Box chat_box;
     [GtkChild] private unowned Gtk.Label welcome_label;
@@ -56,8 +58,175 @@ public class Gemini.Sidebar : Gtk.Bin {
         this.service.authentication_required.connect(on_authentication_required);
         this.service.authentication_completed.connect(on_authentication_completed);
 
-        // Check initial state
+        // Set up account selector popover
+        setup_account_popover();
+
+        // Load active account and check initial state
+        this.service.load_active_account();
+        update_account_label();
         check_gemini_status();
+    }
+
+    /**
+     * Set up the account selector popover on the gear button.
+     */
+    private void setup_account_popover() {
+        var popover = new Gtk.Popover(this.account_menu_button);
+        popover.set_position(Gtk.PositionType.BOTTOM);
+        this.account_menu_button.set_popover(popover);
+
+        var box = new Gtk.Box(Gtk.Orientation.VERTICAL, 0);
+        box.visible = true;
+        box.margin = 6;
+        popover.add(box);
+
+        populate_account_list(box);
+
+        // Re-populate when popover is shown
+        popover.map.connect(() => {
+            foreach (var child in box.get_children()) {
+                box.remove(child);
+            }
+            populate_account_list(box);
+        });
+    }
+
+    /**
+     * Populate the account list in the popover.
+     */
+    private void populate_account_list(Gtk.Box box) {
+        var app = GLib.Application.get_default() as Application.Client;
+        if (app == null || app.controller == null) {
+            var label = new Gtk.Label(_("No accounts available"));
+            label.visible = true;
+            label.margin = 12;
+            label.get_style_context().add_class("dim-label");
+            box.pack_start(label, false, false, 0);
+            return;
+        }
+
+        string? active = this.service.active_account;
+        bool found_google = false;
+
+        foreach (var context in app.controller.get_account_contexts()) {
+            var info = context.account.information;
+            if (info.service_provider != Geary.ServiceProvider.GMAIL) {
+                continue;
+            }
+
+            found_google = true;
+            string email = info.primary_mailbox.address;
+            string display = info.display_name;
+
+            var item_box = new Gtk.Box(Gtk.Orientation.HORIZONTAL, 8);
+            item_box.visible = true;
+            item_box.margin = 4;
+
+            // Checkmark for active account
+            var check_icon = new Gtk.Image.from_icon_name(
+                "emblem-ok-symbolic", Gtk.IconSize.MENU
+            );
+            check_icon.visible = (active != null && active == email);
+            check_icon.set_size_request(16, 16);
+            item_box.pack_start(check_icon, false, false, 0);
+
+            var label_box = new Gtk.Box(Gtk.Orientation.VERTICAL, 2);
+            label_box.visible = true;
+
+            var name_label = new Gtk.Label(display);
+            name_label.visible = true;
+            name_label.xalign = 0;
+            var attrs = new Pango.AttrList();
+            attrs.insert(Pango.attr_weight_new(Pango.Weight.BOLD));
+            name_label.attributes = attrs;
+            label_box.pack_start(name_label, false, false, 0);
+
+            var email_label = new Gtk.Label(email);
+            email_label.visible = true;
+            email_label.xalign = 0;
+            email_label.get_style_context().add_class("dim-label");
+            var email_attrs = new Pango.AttrList();
+            email_attrs.insert(Pango.attr_scale_new(0.9));
+            email_label.attributes = email_attrs;
+            label_box.pack_start(email_label, false, false, 0);
+
+            item_box.pack_start(label_box, true, true, 0);
+
+            var button = new Gtk.Button();
+            button.visible = true;
+            button.get_style_context().add_class("flat");
+            button.relief = Gtk.ReliefStyle.NONE;
+            button.add(item_box);
+
+            // Capture email for the closure
+            string account_email = email;
+            button.clicked.connect(() => {
+                on_account_selected(account_email);
+                this.account_menu_button.popover.popdown();
+            });
+
+            box.pack_start(button, false, false, 0);
+        }
+
+        if (!found_google) {
+            var label = new Gtk.Label(_("No Google accounts configured in Geary"));
+            label.visible = true;
+            label.margin = 12;
+            label.wrap = true;
+            label.max_width_chars = 30;
+            label.get_style_context().add_class("dim-label");
+            box.pack_start(label, false, false, 0);
+        }
+    }
+
+    /**
+     * Handle account selection from the popover.
+     */
+    private void on_account_selected(string email) {
+        try {
+            this.service.switch_active_account(email);
+            this.service.active_account_changed(email);
+        } catch (Error e) {
+            warning("Failed to set active account: %s", e.message);
+        }
+
+        update_account_label();
+
+        // Show checking status while we verify auth
+        this.status_label.label = _("Checking authentication...");
+        this.status_revealer.reveal_child = true;
+        this.login_button.visible = false;
+        this.message_text.sensitive = false;
+
+        // Check auth status for this account
+        this.service.check_authenticated.begin((obj, res) => {
+            if (!this.get_mapped()) return;
+            bool authenticated = this.service.check_authenticated.end(res);
+            if (authenticated) {
+                this.status_revealer.reveal_child = false;
+                this.login_button.visible = false;
+                this.message_text.sensitive = true;
+            } else {
+                // Show login prompt — user can click to authenticate
+                this.status_label.label = _("Sign in to use Gemini with %s").printf(email);
+                this.status_revealer.reveal_child = true;
+                this.login_button.visible = true;
+                this.login_button.sensitive = true;
+            }
+        });
+    }
+
+    /**
+     * Update the account subtitle label.
+     */
+    private void update_account_label() {
+        string? active = this.service.active_account;
+        if (active != null && active.length > 0) {
+            this.account_label.label = active;
+            this.account_label.visible = true;
+        } else {
+            this.account_label.visible = false;
+        }
     }
 
     /**
@@ -65,7 +234,6 @@ public class Gemini.Sidebar : Gtk.Bin {
      */
     private void check_gemini_status() {
         if (!this.service.is_installed()) {
-            // This shouldn't happen if .deb installed correctly
             this.status_label.label = _("Gemini CLI not found. Please reinstall geary-gemini.");
             this.status_revealer.reveal_child = true;
             this.login_button.visible = false;
@@ -75,15 +243,19 @@ public class Gemini.Sidebar : Gtk.Bin {
 
         // Check authentication asynchronously
         this.service.check_authenticated.begin((obj, res) => {
+            if (!this.get_mapped()) return;
             bool authenticated = this.service.check_authenticated.end(res);
             if (authenticated) {
                 this.status_revealer.reveal_child = false;
                 this.message_text.sensitive = true;
             } else {
-                this.status_label.label = _("Sign in with your Google account to use Gemini AI features.");
+                if (this.service.active_account != null) {
+                    this.status_label.label = _("Not authenticated. Select your account using the gear icon to sign in.");
+                } else {
+                    this.status_label.label = _("Select a Google account using the gear icon to get started.");
+                }
                 this.status_revealer.reveal_child = true;
-                this.login_button.visible = true;
-                this.login_button.sensitive = true;
+                this.login_button.visible = false;
                 this.message_text.sensitive = false;
             }
         });
@@ -94,6 +266,7 @@ public class Gemini.Sidebar : Gtk.Bin {
         this.status_label.label = _("Opening browser for Google sign-in...");
 
         this.service.authenticate.begin((obj, res) => {
+            if (!this.get_mapped()) return;
             try {
                 this.service.authenticate.end(res);
                 check_gemini_status();
@@ -105,6 +278,7 @@ public class Gemini.Sidebar : Gtk.Bin {
     }
 
     private void on_authentication_required() {
+        if (!this.get_mapped()) return;
         this.status_label.label = _("Please sign in with Google to continue.");
         this.status_revealer.reveal_child = true;
         this.login_button.visible = true;
@@ -113,8 +287,10 @@ public class Gemini.Sidebar : Gtk.Bin {
     }
 
     private void on_authentication_completed(bool success, string? error_message) {
+        if (!this.get_mapped()) return;
         if (success) {
             this.status_revealer.reveal_child = false;
+            this.login_button.visible = false;
             this.message_text.sensitive = true;
         } else {
             this.status_label.label = _("Login failed: %s").printf(
@@ -168,10 +344,10 @@ public class Gemini.Sidebar : Gtk.Bin {
         // Clear input
         this.message_text.buffer.set_text("", 0);
 
-        // Handle /login command locally
+        // Handle /login command — redirect to gear icon
         if (message.down() == "/login") {
             add_message(message, true);
-            on_login_clicked();
+            add_message(_("Use the gear icon in the header to select a Google account."), false);
             return;
         }
 
@@ -538,6 +714,7 @@ public class Gemini.Sidebar : Gtk.Bin {
     private void scroll_to_bottom() {
         // Use idle to ensure the widget has been allocated
         GLib.Idle.add(() => {
+            if (!this.get_mapped()) return false;
             var adj = this.chat_scrolled.vadjustment;
             adj.value = adj.upper - adj.page_size;
             return false;

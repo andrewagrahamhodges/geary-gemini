@@ -20,6 +20,13 @@ public class Gemini.Service : GLib.Object {
     private const string NODE_BINARY = "/usr/share/geary-gemini/node/bin/node";
     private const string GEMINI_BINARY = "/usr/share/geary-gemini/node_modules/.bin/gemini";
 
+    // gemini-cli config paths
+    private const string GEMINI_CONFIG_DIR = ".gemini";
+    private const string GOOGLE_ACCOUNTS_FILE = "google_accounts.json";
+
+    /** The currently active Gemini account email, or null. */
+    public string? active_account { get; private set; default = null; }
+
     // System prompt for Gemini chat - direct context mode (no MCP).
     private const string SYSTEM_PROMPT =
         "You are an AI assistant integrated into the Geary email client. You help users with their emails.\n\n" +
@@ -419,39 +426,35 @@ public class Gemini.Service : GLib.Object {
 ".printf(truncate_for_prompt(body, 12000)));
 
         if (email.attachments != null && email.attachments.size > 0) {
-            ctx.append("[Attachments]
-");
+            ctx.append("[Attachments]\n");
             int index = 1;
             foreach (var attachment in email.attachments) {
                 string name = attachment.file != null ? attachment.file.get_basename() : "attachment";
                 string mime = attachment.content_type != null ? attachment.content_type.to_string() : "unknown";
-                ctx.append("%d. %s (%s)
-".printf(index, name, mime));
+                ctx.append("%d. %s (%s)\n".printf(index, name, mime));
 
-                bool extracted = false;
                 if (attachment.file != null && mime.has_prefix("text/")) {
+                    // Inline text content directly
                     try {
                         uint8[] bytes;
                         string? etag;
                         if (attachment.file.load_contents(null, out bytes, out etag)) {
                             string text = (string) bytes;
                             if (text != null && text.strip().length > 0) {
-                                ctx.append("Extracted text:
-%s
-
-".printf(truncate_for_prompt(text, 6000)));
-                                extracted = true;
+                                ctx.append("Extracted text:\n%s\n\n".printf(
+                                    truncate_for_prompt(text, 6000)));
                             }
                         }
                     } catch (Error e) {
                         debug("Attachment text extraction failed: %s", e.message);
                     }
-                }
-
-                if (!extracted) {
-                    ctx.append("Extracted text: [unavailable]
-
-");
+                } else if (attachment.file != null) {
+                    // For PDFs, images, and other binary files: pass the file path
+                    // using gemini-cli's @ syntax so it can analyze them multimodally
+                    string file_path = attachment.file.get_path();
+                    if (file_path != null) {
+                        ctx.append("File content: @%s\n\n".printf(file_path));
+                    }
                 }
                 index++;
             }
@@ -541,4 +544,80 @@ public class Gemini.Service : GLib.Object {
             default: return code.up(); // Fallback to uppercase code
         }
     }
+
+    /**
+     * Load the currently active Gemini account from ~/.gemini/google_accounts.json.
+     */
+    public void load_active_account() {
+        string path = Path.build_filename(
+            Environment.get_home_dir(), GEMINI_CONFIG_DIR, GOOGLE_ACCOUNTS_FILE
+        );
+
+        try {
+            string contents;
+            FileUtils.get_contents(path, out contents);
+            var parser = new Json.Parser();
+            parser.load_from_data(contents);
+            var root = parser.get_root();
+            if (root != null && root.get_node_type() == Json.NodeType.OBJECT) {
+                var obj = root.get_object();
+                if (obj.has_member("active")) {
+                    this.active_account = obj.get_string_member("active");
+                }
+            }
+        } catch (Error e) {
+            debug("No active Gemini account found: %s", e.message);
+        }
+    }
+
+    /**
+     * Switch the active Gemini account by writing to ~/.gemini/google_accounts.json.
+     */
+    public void switch_active_account(string email) throws Error {
+        string dir_path = Path.build_filename(
+            Environment.get_home_dir(), GEMINI_CONFIG_DIR
+        );
+        string file_path = Path.build_filename(dir_path, GOOGLE_ACCOUNTS_FILE);
+
+        // Ensure directory exists
+        DirUtils.create_with_parents(dir_path, 0755);
+
+        // Read existing file to preserve "old" array
+        Json.Array old_array = new Json.Array();
+        try {
+            string contents;
+            FileUtils.get_contents(file_path, out contents);
+            var parser = new Json.Parser();
+            parser.load_from_data(contents);
+            var root = parser.get_root();
+            if (root != null && root.get_node_type() == Json.NodeType.OBJECT) {
+                var obj = root.get_object();
+                if (obj.has_member("old")) {
+                    old_array = obj.get_array_member("old");
+                }
+            }
+        } catch (Error e) {
+            // File doesn't exist yet, that's fine
+        }
+
+        // Build new JSON
+        var generator = new Json.Generator();
+        generator.pretty = true;
+        var root_node = new Json.Node(Json.NodeType.OBJECT);
+        var obj = new Json.Object();
+        obj.set_string_member("active", email);
+        obj.set_array_member("old", old_array);
+        root_node.set_object(obj);
+        generator.set_root(root_node);
+
+        string json = generator.to_data(null);
+        FileUtils.set_contents(file_path, json);
+
+        this.active_account = email;
+    }
+
+    /**
+     * Signal emitted when the active account changes.
+     */
+    public signal void active_account_changed(string? email);
 }
