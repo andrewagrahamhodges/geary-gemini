@@ -6,7 +6,7 @@
       <object class="GtkBox" id="main_box">
         <property name="visible">True</property>
         <property name="orientation">vertical</property>
-        <property name="width_request">280</property>
+        <property name="width_request">500</property>
         <style>
           <class name="gemini-sidebar"/>
         </style>

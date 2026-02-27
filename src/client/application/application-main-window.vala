@@ -2540,10 +2540,10 @@ public class Application.MainWindow :
         this.conversation_headerbar.gemini_open = visible;
 
         if (visible) {
-            // Position the paned so the sidebar gets ~1/3 of the pane width
+            // Position the paned so the sidebar gets ~half the pane width
             int paned_width = this.conversation_gemini_paned.get_allocated_width();
             if (paned_width > 0) {
-                this.conversation_gemini_paned.position = (paned_width * 2) / 3;
+                this.conversation_gemini_paned.position = paned_width / 2;
             }
         }
     }
