@@ -497,3 +497,7 @@ Summarize what you updated, then we are done for the day."
 ## GEARY Agent Skill
 
 See  for the in-app Gemini behavior contract and response rules.
+
+## Agent Instructions
+
+See  for coding-agent workflow, architecture decisions, and build/test guidance.
