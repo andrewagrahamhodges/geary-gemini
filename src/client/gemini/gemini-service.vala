@@ -48,13 +48,13 @@ public class Gemini.Service : GLib.Object {
     public signal void authentication_completed(bool success, string? error_message);
 
 
-    private string? extract_first_url(string? text) {
+    internal string? extract_first_url(string? text) {
         if (text == null || text.length == 0) {
             return null;
         }
 
         try {
-            var regex = new Regex("(https?://[^\\s]+)");
+            var regex = new Regex("(https?://[^\\s<>\"']+[^\\s<>\"'.,;:!?\\)\\]])");
             MatchInfo info;
             if (regex.match(text, 0, out info)) {
                 return info.fetch(1);
@@ -174,7 +174,7 @@ public class Gemini.Service : GLib.Object {
      */
     public delegate void StructuredStreamCallback(string msg_type, string content, string? tool_name, string? tool_input_json);
 
-    private string filter_non_fatal_warnings(string? stderr_text) {
+    internal string filter_non_fatal_warnings(string? stderr_text) {
         if (stderr_text == null || stderr_text.length == 0) {
             return "";
         }
@@ -217,8 +217,14 @@ public class Gemini.Service : GLib.Object {
         );
         launcher.setenv("NODE_NO_WARNINGS", "1", true);
         var subprocess = launcher.spawn(
-            NODE_BINARY, GEMINI_BINARY, "-p", prompt
+            NODE_BINARY, GEMINI_BINARY, "-p", "-"
         );
+
+        // Write prompt via stdin to avoid exposing email content in /proc/cmdline
+        var stdin_stream = subprocess.get_stdin_pipe();
+        var prompt_bytes = new GLib.Bytes(prompt.data);
+        yield stdin_stream.write_bytes_async(prompt_bytes);
+        yield stdin_stream.close_async();
 
         string? stdout_buf = null;
         string? stderr_buf = null;
@@ -240,12 +246,18 @@ public class Gemini.Service : GLib.Object {
                 // Stream ended
             }
 
-            // Read any stderr
+            // Read all stderr lines
+            var stderr_builder = new StringBuilder();
             try {
-                stderr_buf = yield stderr_stream.read_line_async();
+                string? err_line;
+                while ((err_line = yield stderr_stream.read_line_async()) != null) {
+                    stderr_builder.append(err_line);
+                    stderr_builder.append("\n");
+                }
             } catch (Error e) {
-                // Ignore
+                // Stream ended
             }
+            stderr_buf = stderr_builder.str;
 
             yield subprocess.wait_async();
             stdout_buf = output_builder.str;
@@ -321,7 +333,7 @@ public class Gemini.Service : GLib.Object {
     }
 
 
-    private string truncate_for_prompt(string text, int max_chars) {
+    internal string truncate_for_prompt(string text, int max_chars) {
         if (text == null) return "";
         if (text.length <= max_chars) return text;
         return text.substring(0, max_chars) + "

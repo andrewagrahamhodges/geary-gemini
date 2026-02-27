@@ -2457,6 +2457,10 @@ public class Application.MainWindow :
     private void ensure_gemini_sidebar_visible() {
         // Create sidebar if it does not exist
         if (this.gemini_sidebar == null) {
+            if (this.application.gemini_service == null) {
+                warning("Cannot open Gemini sidebar: service not available");
+                return;
+            }
             this.gemini_sidebar = new Gemini.Sidebar(this.application.gemini_service);
             this.gemini_sidebar_container.pack_start(this.gemini_sidebar, true, true, 0);
             this.gemini_sidebar.show();

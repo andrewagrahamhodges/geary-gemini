@@ -212,7 +212,7 @@
                 <property name="visible">True</property>
                 <property name="sensitive">False</property>
                 <property name="valign">end</property>
-                <property name="tooltip_text" translatable="yes">Send message (Ctrl+Enter)</property>
+                <property name="tooltip_text" translatable="yes">Send message (Enter)</property>
                 <property name="always_show_image">True</property>
                 <property name="width_request">40</property>
                 <child>

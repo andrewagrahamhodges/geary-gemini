@@ -397,10 +397,9 @@ public class Gemini.Sidebar : Gtk.Bin {
         }
 
         string current = this.thinking_message_label.label ?? "";
-        string merged = current.length > 0 ? "%s
-%s".printf(current, text) : text;
+        string merged = current.length > 0 ? "%s\n%s".printf(current, text) : text;
         if (merged.length > 1000) {
-            merged = merged.substring(merged.length - 1000);
+            merged = "…" + merged.substring(merged.length - 999);
         }
         this.thinking_message_label.label = merged;
     }
@@ -409,7 +408,7 @@ public class Gemini.Sidebar : Gtk.Bin {
      * Convert markdown text to Pango markup for rendering in GTK labels.
      * Supports: **bold**, *italic*, `code`, ## headers, - lists
      */
-    private string markdown_to_pango(string markdown) {
+    internal string markdown_to_pango(string markdown) {
         // First escape any existing markup characters to prevent injection
         string result = GLib.Markup.escape_text(markdown);
 
@@ -448,10 +447,17 @@ public class Gemini.Sidebar : Gtk.Bin {
             // Ignore regex errors
         }
 
-        // Italic: *text* -> <i>text</i> (but not inside bold)
+        // Italic: *text* or _text_ -> <i>text</i>
+        // Bold is already replaced, so single * pairs are safe to match
         try {
-            var italic_regex = new Regex("(?<!\\*)\\*([^*]+)\\*(?!\\*)");
+            var italic_regex = new Regex("\\*([^*]+)\\*");
             result = italic_regex.replace(result, -1, 0, "<i>\\1</i>");
+        } catch (RegexError e) {
+            // Ignore regex errors
+        }
+        try {
+            var italic_underscore_regex = new Regex("(?<![\\w])_([^_]+)_(?![\\w])");
+            result = italic_underscore_regex.replace(result, -1, 0, "<i>\\1</i>");
         } catch (RegexError e) {
             // Ignore regex errors
         }
