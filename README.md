@@ -190,23 +190,22 @@ docker compose run --rm clean    # Clear build cache
 **Current Mission:** Integrate Gemini AI capabilities into Geary
 
 **Features Implemented:**
-1. **Translate Button** - Next to reply/forward buttons, translates email to system language via gemini-cli
-2. **Summarize Button** - Next to translate button, generates email summary via gemini-cli
+1. **Gemini Chat Sidebar** - Resizable chat pane (50/50 split, 500px min) with markdown rendering, streaming status bar, and message history
+2. **Account Switcher** - Gear-icon popover lists Geary's Google accounts; persists active account in `~/.gemini/google_accounts.json`
 3. **Composer AI Helper** - Gmail-style button in composer toolbar with inline prompt bar
-4. **GeminiService** - Core service class with auto-install logic for gemini-cli
-5. **Gemini Chat Sidepane** - Full chat widget with message history and loading indicators
-6. **Sidebar Toggle Button** - Star icon button in conversation headerbar to toggle sidepane
+4. **GeminiService** - Core service class: stdin-based prompts, streaming auth, multimodal attachment support (`@<path>`)
+5. **Sidebar Toggle Button** - Headerbar button to toggle the Gemini sidebar
 
 **Integration Approach:**
-- Use `gemini-cli` as the AI backend (subprocess calls)
-- Auto-install gemini-cli via npm on first use (like Zed editor)
-- Authentication via Google OAuth (handled by gemini-cli)
-- All AI features are additive (new buttons/pane), minimal changes to core Geary
+- `gemini-cli` as AI backend via subprocess (prompts passed via stdin for privacy)
+- Authentication via Google OAuth (handled by gemini-cli, streamed for immediate URL capture)
+- All AI features are additive — minimal changes to core Geary
+- Async widget safety: all callbacks guard with `get_mapped()` to prevent crashes
 
 **Build Strategy:**
-- Fully containerized build (Ubuntu 25.10 base for development)
+- Fully containerized build (Ubuntu 25.10 base)
 - Docker Compose orchestrates build environment
-- Outputs `.deb` package for installation
+- Outputs `.deb` package in `dist/`
 
 **Installation - Kill Geary Properly:**
 

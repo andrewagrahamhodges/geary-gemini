@@ -51,9 +51,9 @@ If you reintroduce MCP/DBus, treat that as a major architecture change requiring
 ## UX Rules (Established)
 
 - AI icon should be assistant-like (not generic star).
-- Thinking/tool panel should be above input composer.
-- Tool details should be collapsed by default; expand on demand.
-- Thinking text should wrap to panel width when expanded.
+- Thinking/processing status is a **single-line bar** (spinner + ellipsized label) above the input — no expandable details panel.
+- Streaming status shows tool names and response snippets inline, auto-truncated to fit.
+- Sidebar opens at **50/50 split** with the email view, minimum 500px, user-resizable via drag handle.
 - Composer behavior:
   - **Enter = send**
   - **Ctrl+Enter = newline**
@@ -115,6 +115,7 @@ meson test -C /tmp/build --no-rebuild --print-errorlogs \
 - Preserve existing i18n style (`_()` for user-visible strings).
 - Do not swallow real failures; only suppress known non-fatal noise.
 - Prefer deterministic behavior over clever abstractions.
+- **Async widget safety**: all async callbacks and signal handlers in the sidebar must guard with `if (!this.get_mapped()) return;` before touching widget properties. The sidebar can be destroyed while callbacks are in-flight.
 
 ## Known Quirks
 
