@@ -165,11 +165,18 @@ public class Gemini.Sidebar : Gtk.Bin {
             return;
         }
 
-        // Clear input and add user message to chat
+        // Clear input
         this.message_text.buffer.set_text("", 0);
-        add_message(message, true);
 
-        // Send to Gemini
+        // Handle /login command locally
+        if (message.down() == "/login") {
+            add_message(message, true);
+            on_login_clicked();
+            return;
+        }
+
+        // Add user message to chat and send to Gemini
+        add_message(message, true);
         send_message.begin(message);
     }
 

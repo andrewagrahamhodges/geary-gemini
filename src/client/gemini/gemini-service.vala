@@ -112,6 +112,7 @@ public class Gemini.Service : GLib.Object {
 
     /**
      * Authenticate with Google (opens browser).
+     * Streams output line-by-line so the auth URL is opened immediately.
      */
     public async void authenticate() throws Error {
         if (!is_installed()) {
@@ -126,16 +127,48 @@ public class Gemini.Service : GLib.Object {
             NODE_BINARY, GEMINI_BINARY, "auth", "login"
         );
 
-        string? stdout_buf = null;
-        string? stderr_buf = null;
-        yield subprocess.communicate_utf8_async(null, null, out stdout_buf, out stderr_buf);
+        // Stream stdout and stderr to capture the auth URL as soon as it appears
+        var stdout_stream = new DataInputStream(subprocess.get_stdout_pipe());
+        var stderr_stream = new DataInputStream(subprocess.get_stderr_pipe());
+        var output = new StringBuilder();
+        string? auth_url = null;
 
-        string combined = "%s
-%s".printf(stdout_buf ?? "", stderr_buf ?? "");
-        string? auth_url = extract_first_url(combined);
-        if (auth_url != null) {
-            open_auth_url(auth_url);
+        // Read stdout lines
+        try {
+            string? line;
+            while ((line = yield stdout_stream.read_line_async()) != null) {
+                output.append(line);
+                output.append("\n");
+                if (auth_url == null) {
+                    auth_url = extract_first_url(line);
+                    if (auth_url != null) {
+                        open_auth_url(auth_url);
+                    }
+                }
+            }
+        } catch (Error e) {
+            // Stream ended
         }
+
+        // Read stderr lines
+        try {
+            string? line;
+            while ((line = yield stderr_stream.read_line_async()) != null) {
+                output.append(line);
+                output.append("\n");
+                if (auth_url == null) {
+                    auth_url = extract_first_url(line);
+                    if (auth_url != null) {
+                        open_auth_url(auth_url);
+                    }
+                }
+            }
+        } catch (Error e) {
+            // Stream ended
+        }
+
+        yield subprocess.wait_async();
+        string combined = output.str;
 
         if (!subprocess.get_successful()) {
             // Some gemini-cli versions emit "Loaded cached credentials" and exit non-zero.
