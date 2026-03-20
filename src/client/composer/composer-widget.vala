@@ -2549,8 +2549,25 @@ public class Composer.Widget : Gtk.EventBox, Geary.BaseInterface {
      * Handle AI generation request from the editor.
      */
     private void on_ai_generate_requested(string prompt) {
-        // TODO: Re-add Gemini AI compose integration
-        warning("AI compose not yet integrated");
+        Application.Client? app = null;
+        if (this.container != null) {
+            app = this.container.top_window.application as Application.Client;
+        }
+        if (app == null) {
+            warning("Unable to access application for AI compose");
+            return;
+        }
+
+        app.gemini_service.help_compose.begin(prompt, null, (obj, res) => {
+            try {
+                string? response = app.gemini_service.help_compose.end(res);
+                if (!Geary.String.is_empty_or_whitespace(response)) {
+                    this.editor.body.insert_html(response);
+                }
+            } catch (GLib.Error err) {
+                warning("AI compose failed: %s", err.message);
+            }
+        });
     }
 
 }
