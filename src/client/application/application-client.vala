@@ -145,6 +145,9 @@ public class Application.Client : Gtk.Application {
     /**
      * The global Gemini AI service for this app instance.
      */
+    public Gemini.Service gemini_service {
+        get; private set;
+    }
 
     /**
      * The user's desktop settings for the application.
@@ -358,6 +361,7 @@ public class Application.Client : Gtk.Application {
 
         this.engine = new Geary.Engine(get_resource_directory());
         this.config = new Configuration(SCHEMA_ID);
+        this.gemini_service = new Gemini.Service();
         this.autostart = new StartupManager(this);
 
         // Ensure all geary windows have an icon

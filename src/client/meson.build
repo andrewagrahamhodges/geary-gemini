@@ -88,6 +88,8 @@ client_vala_sources = files(
   'composer/contact-entry-completion.vala',
   'composer/spell-check-popover.vala',
 
+  'gemini/gemini-service.vala',
+
   'conversation-list/conversation-list-model.vala',
   'conversation-list/conversation-list-participant.vala',
   'conversation-list/conversation-list-row.vala',
