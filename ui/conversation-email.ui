@@ -79,6 +79,26 @@
       </packing>
     </child>
     <child>
+      <object class="GtkButton" id="translate_button">
+        <property name="visible">True</property>
+        <property name="receives_default">True</property>
+        <property name="tooltip_text" translatable="yes">Translate this message</property>
+        <property name="valign">start</property>
+        <property name="relief">none</property>
+        <signal name="clicked" handler="on_translate_clicked" swapped="no"/>
+        <child>
+          <object class="GtkImage">
+            <property name="visible">True</property>
+            <property name="icon_name">preferences-desktop-locale-symbolic</property>
+          </object>
+        </child>
+      </object>
+      <packing>
+        <property name="left_attach">3</property>
+        <property name="top_attach">0</property>
+      </packing>
+    </child>
+    <child>
       <object class="GtkMenuButton" id="email_menubutton">
         <property name="visible">True</property>
         <property name="sensitive">False</property>
@@ -94,7 +114,7 @@
         </child>
       </object>
       <packing>
-        <property name="left_attach">3</property>
+        <property name="left_attach">4</property>
         <property name="top_attach">0</property>
       </packing>
     </child>

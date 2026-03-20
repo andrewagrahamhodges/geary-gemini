@@ -247,6 +247,10 @@ public class ConversationEmail : Gtk.Box, Geary.BaseInterface {
 
     [GtkChild] private unowned Gtk.MenuButton email_menubutton;
 
+    [GtkChild] private unowned Gtk.Button translate_button;
+
+    private bool is_translated = false;
+
     [GtkChild] private unowned Gtk.Grid sub_messages;
 
 
@@ -858,6 +862,187 @@ public class ConversationEmail : Gtk.Box, Geary.BaseInterface {
         );
         if (email_actions != null) {
             email_actions.activate_action(name, this.email.id.to_variant());
+        }
+    }
+
+    
+    [GtkCallback]
+    private void on_translate_clicked() {
+        do_translate.begin();
+    }
+
+    private async void do_translate() {
+        if (this.is_translated) {
+            // Restore original
+            string restore_js = """(function() {
+                var banner = document.getElementById('geary-translate-banner');
+                if (banner) banner.remove();
+                var els = document.querySelectorAll('[data-translate-id]');
+                for (var i = 0; i < els.length; i++) {
+                    var orig = els[i].getAttribute('data-orig-text');
+                    if (orig) {
+                        var children = els[i].childNodes;
+                        for (var j = 0; j < children.length; j++) {
+                            if (children[j].nodeType === 3) children[j].textContent = '';
+                        }
+                        var ft = null;
+                        for (var j = 0; j < els[i].childNodes.length; j++) {
+                            if (els[i].childNodes[j].nodeType === 3) { ft = els[i].childNodes[j]; break; }
+                        }
+                        if (ft) ft.textContent = orig;
+                        else els[i].insertBefore(document.createTextNode(orig), els[i].firstChild);
+                        els[i].removeAttribute('data-translate-id');
+                        els[i].removeAttribute('data-orig-text');
+                    }
+                }
+            })();""";
+            try {
+                yield this.primary_message.evaluate_javascript(restore_js, null);
+            } catch (Error e) {
+                warning("Failed to restore: %s", e.message);
+            }
+            this.is_translated = false;
+            return;
+        }
+
+        // Get the application's translation service
+        var dominated_window = this.primary_message.get_toplevel() as Gtk.Window;
+        var main_window = dominated_window as Application.MainWindow;
+        if (main_window == null) {
+            return;
+        }
+        var translation_service = main_window.application.translation_service;
+        if (!translation_service.is_available()) {
+            return;
+        }
+
+        // Extract visible text from this email's web view
+        string extract_and_tag_js = """(function() {
+            var blocks = [];
+            var id = 0;
+            var seen = new Set();
+            function getVisibleText(el) {
+                var text = '';
+                for (var i = 0; i < el.childNodes.length; i++) {
+                    if (el.childNodes[i].nodeType === 3) text += el.childNodes[i].textContent;
+                }
+                return text;
+            }
+            function isVisible(el) {
+                if (!el || !el.style) return true;
+                var cs = window.getComputedStyle(el);
+                if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+                if (parseFloat(cs.maxHeight) === 0 || parseFloat(cs.maxWidth) === 0) return false;
+                if (cs.fontSize === '0px' || cs.fontSize === '0') return false;
+                return true;
+            }
+            function isInsideHidden(el) {
+                var cur = el;
+                while (cur && cur !== document.body) {
+                    if (!isVisible(cur)) return true;
+                    cur = cur.parentElement;
+                }
+                return false;
+            }
+            var allElements = document.body.querySelectorAll('*');
+            for (var i = 0; i < allElements.length; i++) {
+                var el = allElements[i];
+                var tag = el.tagName;
+                if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') continue;
+                if (isInsideHidden(el)) continue;
+                var directText = getVisibleText(el).trim();
+                var cleaned = directText.replace(/[\s\u00a0\u200b\u200c\u200d\ufeff]/g, '');
+                if (cleaned.length < 2) continue;
+                if (seen.has(directText)) continue;
+                if (el.children.length > 0 && directText.length < 3) continue;
+                seen.add(directText);
+                var blockId = 'tb_' + (id++);
+                el.setAttribute('data-translate-id', blockId);
+                el.setAttribute('data-orig-text', directText);
+                blocks.push(directText);
+            }
+            // Store in title temporarily
+            document.title = blocks.join('\n|||GEARY_BLOCK|||\n');
+        })();""";
+
+        try {
+            yield this.primary_message.evaluate_javascript(extract_and_tag_js, null);
+        } catch (Error e) {
+            warning("Failed to extract text: %s", e.message);
+            return;
+        }
+
+        // Get text from the Geary.Email body
+        string text = "";
+        Geary.Email em = this.email;
+        if (em.body != null) {
+            try {
+                Geary.RFC822.Message msg = em.get_message();
+                text = msg.get_plain_body(false, null) ?? "";
+                if (text.strip().length == 0) {
+                    text = msg.get_searchable_body() ?? "";
+                }
+            } catch (Error e) {
+                warning("Could not get email body: %s", e.message);
+                return;
+            }
+        }
+
+        if (text.strip().length == 0) {
+            return;
+        }
+
+        // Clean and translate
+        string? translated = null;
+        try {
+            translated = yield translation_service.translate(text, null);
+        } catch (Error e) {
+            warning("Translation failed: %s", e.message);
+            return;
+        }
+
+        if (translated == null || translated.strip().length == 0) {
+            return;
+        }
+
+        // URI-encode and inject back
+        string uri_encoded = GLib.Uri.escape_string(translated, null, true);
+
+        var inject_js = new StringBuilder();
+        inject_js.append("(function() {");
+        inject_js.append("var fullText = decodeURIComponent('");
+        inject_js.append(uri_encoded);
+        inject_js.append("');");
+        inject_js.append("var blocks = fullText.split(String.fromCharCode(10)+String.fromCharCode(10)).filter(function(s) { return s.trim().length > 0; });");
+        inject_js.append("var tagged = document.querySelectorAll('[data-translate-id]');");
+        inject_js.append("var bi = 0;");
+        inject_js.append("for (var i = 0; i < tagged.length && bi < blocks.length; i++) {");
+        inject_js.append("  var el = tagged[i];");
+        inject_js.append("  var textNodes = [];");
+        inject_js.append("  for (var j = 0; j < el.childNodes.length; j++) {");
+        inject_js.append("    if (el.childNodes[j].nodeType === 3 && el.childNodes[j].textContent.trim().length > 0) textNodes.push(el.childNodes[j]);");
+        inject_js.append("  }");
+        inject_js.append("  if (textNodes.length > 0) {");
+        inject_js.append("    textNodes[0].textContent = blocks[bi];");
+        inject_js.append("    for (var j = 1; j < textNodes.length; j++) textNodes[j].textContent = '';");
+        inject_js.append("    bi++;");
+        inject_js.append("  }");
+        inject_js.append("}");
+        inject_js.append("var existing = document.getElementById('geary-translate-banner');");
+        inject_js.append("if (!existing) {");
+        inject_js.append("  var banner = document.createElement('div');");
+        inject_js.append("  banner.id = 'geary-translate-banner';");
+        inject_js.append("  banner.style.cssText = 'background:#e8f4fd;border-left:4px solid #2196F3;padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:12px;color:#1565C0;position:sticky;top:0;z-index:9999;';");
+        inject_js.append("  banner.textContent = 'Translated';");
+        inject_js.append("  document.body.insertBefore(banner, document.body.firstChild);");
+        inject_js.append("}");
+        inject_js.append("})();");
+
+        try {
+            yield this.primary_message.evaluate_javascript(inject_js.str, null);
+            this.is_translated = true;
+        } catch (Error e) {
+            warning("Failed to inject translation: %s", e.message);
         }
     }
 
