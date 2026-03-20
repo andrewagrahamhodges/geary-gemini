@@ -31,7 +31,6 @@ public class Application.MainWindow :
     public const string ACTION_TRASH_CONVERSATION = "trash-conversation";
     public const string ACTION_ZOOM = "zoom";
     public const string ACTION_NAVIGATION_BACK = "navigation-back";
-    public const string ACTION_TOGGLE_GEMINI_SIDEBAR = "toggle-gemini-sidebar";
 
     private const ActionEntry[] EDIT_ACTIONS = {
         { Action.Edit.UNDO, on_undo },
@@ -67,7 +66,6 @@ public class Application.MainWindow :
         // Message viewer
         { ACTION_ZOOM, on_zoom, "s" },
         // Gemini AI actions
-        { ACTION_TOGGLE_GEMINI_SIDEBAR, on_toggle_gemini_sidebar },
     };
 
     // Handy leaflet children names
@@ -420,11 +418,7 @@ public class Application.MainWindow :
 
 
     // Gemini sidebar
-    [GtkChild] private unowned Gtk.Paned conversation_gemini_paned;
-    [GtkChild] private unowned Gtk.Revealer gemini_sidebar_revealer;
-    [GtkChild] private unowned Gtk.Box gemini_sidebar_container;
 
-    private Gemini.Sidebar? gemini_sidebar = null;
     private Components.ConversationActions[] folder_conversation_actions = {};
 
     private Components.InfoBar offline_infobar;
@@ -2452,24 +2446,6 @@ public class Application.MainWindow :
         reply_conversation(FORWARD);
     }
 
-    /**
-     * Ensure the Gemini sidebar is created and visible.
-     */
-    private void ensure_gemini_sidebar_visible() {
-        // Create sidebar if it does not exist
-        if (this.gemini_sidebar == null) {
-            if (this.application.gemini_service == null) {
-                warning("Cannot open Gemini sidebar: service not available");
-                return;
-            }
-            this.gemini_sidebar = new Gemini.Sidebar(this.application.gemini_service);
-            this.gemini_sidebar_container.pack_start(this.gemini_sidebar, true, true, 0);
-            this.gemini_sidebar.show();
-        }
-
-        // Make it visible
-        set_gemini_sidebar_visible(true);
-    }
 
     /**
      * Gets the currently displayed email's body text for AI processing.
@@ -2524,29 +2500,7 @@ public class Application.MainWindow :
         return "From: %s\nSubject: %s\n\n%s".printf(from, subject, body);
     }
 
-    private void on_toggle_gemini_sidebar() {
-        // Toggle visibility
-        bool is_visible = this.gemini_sidebar_revealer.reveal_child;
-        if (is_visible) {
-            set_gemini_sidebar_visible(false);
-        } else {
-            ensure_gemini_sidebar_visible();
-        }
-    }
 
-    private void set_gemini_sidebar_visible(bool visible) {
-        this.gemini_sidebar_revealer.visible = visible;
-        this.gemini_sidebar_revealer.reveal_child = visible;
-        this.conversation_headerbar.gemini_open = visible;
-
-        if (visible) {
-            // Position the paned so the sidebar gets ~half the pane width
-            int paned_width = this.conversation_gemini_paned.get_allocated_width();
-            if (paned_width > 0) {
-                this.conversation_gemini_paned.position = paned_width / 2;
-            }
-        }
-    }
 
     private void on_show_window_menu() {
         show_window_menu();

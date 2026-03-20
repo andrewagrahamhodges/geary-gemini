@@ -31,7 +31,7 @@ services:
         echo "=========================================="
         echo "CONFIGURE"
         echo "=========================================="
-        meson setup $$BUILD_DIR --prefix=/usr --buildtype=release -Dprofile=release
+        CFLAGS="-Wno-incompatible-pointer-types -Wno-int-conversion" meson setup $$BUILD_DIR --prefix=/usr --buildtype=release -Dprofile=release
 
         echo "=========================================="
         echo "BUILD"

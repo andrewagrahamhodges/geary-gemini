@@ -115,8 +115,6 @@ client_vala_sources = files(
   'folder-list/folder-list-search-branch.vala',
   'folder-list/folder-list-special-grouping.vala',
 
-  'gemini/gemini-service.vala',
-  'gemini/gemini-sidebar.vala',
 
   'plugin/plugin-account.vala',
   'plugin/plugin-action-bar.vala',
