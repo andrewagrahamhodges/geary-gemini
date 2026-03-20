@@ -2462,145 +2462,372 @@ public class Application.MainWindow :
             return;
         }
 
-        // If already showing translation, restore original
-        if (this.is_showing_translation) {
-            restore_original_email.begin();
-            return;
-        }
-
         string? body = get_displayed_email_text();
-        if (Geary.String.is_empty_or_whitespace(body)) {
-            add_notification(new Components.InAppNotification(
-                _("No message text is available to translate")
-            ));
-            return;
-        }
-
-        do_translate_inline.begin(body);
+        // do_translate_inline handles both translate and restore
+        do_translate_inline.begin(body ?? "");
     }
 
     private async void do_translate_inline(string body) {
-        // Get the current email view
-        ConversationEmail? email_view = get_current_email_view();
+        var email_view = get_current_email_view();
         if (email_view == null) {
             add_notification(new Components.InAppNotification(
-                _("No email view available")
+                _("No email is currently displayed")
             ));
             return;
         }
 
-        // Store original HTML before replacing
-        try {
-            string store_js = "if (!window._gearyOriginalBody) { window._gearyOriginalBody = document.body.innerHTML; }";
-            yield email_view.primary_message.evaluate_javascript(store_js, null);
-        } catch (Error store_err) {
-            warning("Failed to store original HTML: %s", store_err.message);
+        if (this.is_showing_translation) {
+            // Restore original: remove banner and restore saved text
+            string restore_js = """(function() {
+                var banner = document.getElementById('geary-translate-banner');
+                if (banner) banner.remove();
+                var els = document.querySelectorAll('[data-translate-id]');
+                for (var i = 0; i < els.length; i++) {
+                    var orig = els[i].getAttribute('data-orig-text');
+                    if (orig) {
+                        // Restore only text nodes, preserving child elements
+                        var children = els[i].childNodes;
+                        for (var j = 0; j < children.length; j++) {
+                            if (children[j].nodeType === 3) {
+                                children[j].textContent = '';
+                            }
+                        }
+                        // Set text on first text node or prepend one
+                        var first_text = null;
+                        for (var j = 0; j < els[i].childNodes.length; j++) {
+                            if (els[i].childNodes[j].nodeType === 3) {
+                                first_text = els[i].childNodes[j];
+                                break;
+                            }
+                        }
+                        if (first_text) {
+                            first_text.textContent = orig;
+                        } else {
+                            els[i].insertBefore(document.createTextNode(orig), els[i].firstChild);
+                        }
+                        els[i].removeAttribute('data-translate-id');
+                        els[i].removeAttribute('data-orig-text');
+                    }
+                }
+            })();""";
+            try {
+                yield email_view.primary_message.evaluate_javascript(restore_js, null);
+            } catch (Error e) {
+                warning("Failed to restore original: %s", e.message);
+            }
+            this.is_showing_translation = false;
+            return;
         }
 
-        // Show translating notification (dismiss when done)
-        this.translating_notification = new Components.InAppNotification(_("Translating..."), 60);
-        add_notification(this.translating_notification);
+        // Show "Translating..." notification
+        var translating_notif = new Components.InAppNotification(_("Translating..."), 120);
+        add_notification(translating_notif);
 
         try {
-            string? translated = yield this.application.translation_service.translate(body, null);
+            // Phase 1: Extract text blocks from DOM as JSON
+            // Each block is a visible element with substantial text content
+            string extract_js = """(function() {
+                var blocks = [];
+                var id = 0;
+                // Block-level elements that typically contain translatable text
+                var blockTags = ['P','DIV','TD','TH','LI','H1','H2','H3','H4','H5','H6',
+                                 'SPAN','STRONG','EM','B','I','A','LABEL','CAPTION','FIGCAPTION','BLOCKQUOTE'];
+                var seen = new Set();
 
-            // Dismiss the translating notification
-            if (this.translating_notification != null) {
-                this.translating_notification.close();
-                this.translating_notification = null;
+                function getVisibleText(el) {
+                    // Get direct text content (not from children elements)
+                    var text = '';
+                    for (var i = 0; i < el.childNodes.length; i++) {
+                        if (el.childNodes[i].nodeType === 3) {
+                            text += el.childNodes[i].textContent;
+                        }
+                    }
+                    return text;
+                }
+
+                function isVisible(el) {
+                    if (!el || !el.style) return true;
+                    var style = window.getComputedStyle(el);
+                    if (style.display === 'none') return false;
+                    if (style.visibility === 'hidden') return false;
+                    if (style.opacity === '0') return false;
+                    if (parseFloat(style.maxHeight) === 0) return false;
+                    if (parseFloat(style.maxWidth) === 0) return false;
+                    // Check font-size: 0 (hidden unsubscribe links etc)
+                    if (style.fontSize === '0px' || style.fontSize === '0') return false;
+                    // Check line-height: 0 with font-size: 0
+                    if (style.lineHeight === '0px' && style.fontSize === '0px') return false;
+                    return true;
+                }
+
+                function isInsideHidden(el) {
+                    var current = el;
+                    while (current && current !== document.body) {
+                        if (!isVisible(current)) return true;
+                        current = current.parentElement;
+                    }
+                    return false;
+                }
+
+                // Walk all elements, find leaf text containers
+                var allElements = document.body.querySelectorAll('*');
+                for (var i = 0; i < allElements.length; i++) {
+                    var el = allElements[i];
+                    var tag = el.tagName;
+
+                    // Skip script, style, noscript
+                    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') continue;
+
+                    // Skip if not visible
+                    if (isInsideHidden(el)) continue;
+
+                    // Get direct text content of this element
+                    var directText = getVisibleText(el).trim();
+
+                    // Skip if no meaningful text (just whitespace or nbsp)
+                    var cleaned = directText.replace(/[\s\u00a0\u200b\u200c\u200d\ufeff]/g, '');
+                    if (cleaned.length < 2) continue;
+
+                    // Skip if we already tagged a parent/child with same text
+                    if (seen.has(directText)) continue;
+
+                    // Check this element has mostly text (not just wrapper for child elements)
+                    var childElementText = 0;
+                    for (var j = 0; j < el.children.length; j++) {
+                        childElementText += (el.children[j].textContent || '').length;
+                    }
+                    var totalText = el.textContent.length;
+                    // If child elements contain most of the text, skip (it's a wrapper)
+                    if (childElementText > 0 && directText.length < 3) continue;
+
+                    seen.add(directText);
+                    var blockId = 'tb_' + (id++);
+                    el.setAttribute('data-translate-id', blockId);
+                    el.setAttribute('data-orig-text', directText);
+                    blocks.push({id: blockId, text: directText});
+                }
+                return JSON.stringify(blocks);
+            })();""";
+
+            string? blocks_json = null;
+            // evaluate_javascript doesn't return values easily in this WebKit version
+            // Use a different approach: inject into a hidden element and read it
+            string extract_and_store_js = """(function() {
+                var blocks = [];
+                var id = 0;
+                var seen = new Set();
+
+                function getVisibleText(el) {
+                    var text = '';
+                    for (var i = 0; i < el.childNodes.length; i++) {
+                        if (el.childNodes[i].nodeType === 3) {
+                            text += el.childNodes[i].textContent;
+                        }
+                    }
+                    return text;
+                }
+
+                function isVisible(el) {
+                    if (!el || !el.style) return true;
+                    var cs = window.getComputedStyle(el);
+                    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+                    if (parseFloat(cs.maxHeight) === 0 || parseFloat(cs.maxWidth) === 0) return false;
+                    if (cs.fontSize === '0px' || cs.fontSize === '0') return false;
+                    return true;
+                }
+
+                function isInsideHidden(el) {
+                    var cur = el;
+                    while (cur && cur !== document.body) {
+                        if (!isVisible(cur)) return true;
+                        cur = cur.parentElement;
+                    }
+                    return false;
+                }
+
+                var allElements = document.body.querySelectorAll('*');
+                for (var i = 0; i < allElements.length; i++) {
+                    var el = allElements[i];
+                    var tag = el.tagName;
+                    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') continue;
+                    if (isInsideHidden(el)) continue;
+                    var directText = getVisibleText(el).trim();
+                    var cleaned = directText.replace(/[\s\u00a0\u200b\u200c\u200d\ufeff]/g, '');
+                    if (cleaned.length < 2) continue;
+                    if (seen.has(directText)) continue;
+                    if (el.children.length > 0 && directText.length < 3) continue;
+                    seen.add(directText);
+                    var blockId = 'tb_' + (id++);
+                    el.setAttribute('data-translate-id', blockId);
+                    el.setAttribute('data-orig-text', directText);
+                    blocks.push({id: blockId, text: directText});
+                }
+
+                // Store result in a hidden element for Vala to read
+                var store = document.createElement('div');
+                store.id = 'geary-translate-data';
+                store.style.display = 'none';
+                store.textContent = JSON.stringify(blocks);
+                document.body.appendChild(store);
+            })();""";
+
+            yield email_view.primary_message.evaluate_javascript(extract_and_store_js, null);
+
+            // Read the extracted blocks
+            // We need to get the content from the hidden div
+            // Use evaluate_javascript to get document title trick won't work
+            // Instead: extract text via the existing get_displayed_email_text approach
+            // Actually, let's use a callback approach via document.title
+            string read_js = "document.title = document.getElementById('geary-translate-data').textContent;";
+            yield email_view.primary_message.evaluate_javascript(read_js, null);
+
+            // Read document title to get the JSON
+            // Unfortunately we can't easily get return values from evaluate_javascript
+            // Alternative approach: just translate the full visible text but do it block by block
+            // Let's use a simpler approach - extract text via get_displayed_email_text,
+            // but translate using the block separator approach
+
+            // Simpler approach: Use the body text but split by double-newlines as block boundaries
+            // Then translate each block separately and inject back using text-node walking
+            // with block-aware mapping
+
+            // Actually, the cleanest approach given WebKit limitations:
+            // Use get_displayed_email_text() which gives us the visible text,
+            // split into blocks by blank lines, translate each block via trans,
+            // then replace text nodes block by block in JS
+
+            string? text = get_displayed_email_text();
+            if (Geary.String.is_empty_or_whitespace(text)) {
+                translating_notif.close();
+                add_notification(new Components.InAppNotification(
+                    _("No text content found to translate")
+                ));
+                return;
             }
 
-            if (Geary.String.is_empty_or_whitespace(translated)) {
+            // Remove the data storage element
+            yield email_view.primary_message.evaluate_javascript(
+                "var el = document.getElementById('geary-translate-data'); if (el) el.remove();",
+                null
+            );
+
+            // Split text into blocks (paragraphs separated by blank lines)
+            string[] paragraphs = text.split("\n\n");
+            var translated_blocks = new Gee.ArrayList<string>();
+            string separator = "\n|||GEARY_BLOCK|||\n";
+
+            // Join all blocks with separator and translate in one call
+            var combined = new StringBuilder();
+            int block_count = 0;
+            foreach (string para in paragraphs) {
+                string trimmed = para.strip();
+                if (trimmed.length == 0) {
+                    continue;
+                }
+                // Clean zero-width characters
+                var cleaned_para = new StringBuilder();
+                unichar c;
+                int ci = 0;
+                while (trimmed.get_next_char(ref ci, out c)) {
+                    if (c == 0x200B || c == 0x200C || c == 0x200D || c == 0xFEFF || c == 0x00AD) {
+                        continue;
+                    }
+                    cleaned_para.append_unichar(c);
+                }
+                string clean = cleaned_para.str.strip();
+                if (clean.length < 2) {
+                    continue;
+                }
+                if (block_count > 0) {
+                    combined.append(separator);
+                }
+                combined.append(clean);
+                block_count++;
+            }
+
+            if (block_count == 0) {
+                translating_notif.close();
                 add_notification(new Components.InAppNotification(
                     _("Translation returned no text")
                 ));
                 return;
             }
 
-            // Escape translated text for safe JS injection
-            string js_safe = translated.replace("\\", "\\\\");
+            // Translate all blocks in one trans call
+            string? result = yield this.application.translation_service.translate(
+                combined.str, null
+            );
+
+            translating_notif.close();
+
+            if (Geary.String.is_empty_or_whitespace(result)) {
+                add_notification(new Components.InAppNotification(
+                    _("Translation returned no text")
+                ));
+                return;
+            }
+
+            // Split result back into blocks
+            string[] result_blocks = result.split("|||GEARY_BLOCK|||");
+
+            // Build JS to replace text in tagged elements block by block
+            // Since we can't easily map paragraphs to DOM elements via evaluate_javascript,
+            // use the simpler approach: replace ALL visible text nodes with the full translated text
+            // but do it in a way that respects the DOM structure
+
+            // Escape for JS
+            string js_safe = result.replace("|||GEARY_BLOCK|||", "\n\n");
+            js_safe = js_safe.replace("\\", "\\\\");
+            js_safe = js_safe.replace("'", "\\'");
             js_safe = js_safe.replace("\n", "\\n");
             js_safe = js_safe.replace("\r", "");
-            js_safe = js_safe.replace("'", "\\'");
 
-            // Build JS that replaces only visible text nodes, skipping
-            // hidden elements, images, scripts, styles, and preheader spans
-            var js = new StringBuilder();
-            js.append("(function() {");
-            js.append("var translated = '");
-            js.append(js_safe);
-            js.append("';");
-            // Split into sentences/segments for mapping to text nodes
-            js.append("var segments = translated.split('\n').filter(function(s) { return s.trim().length > 0; });");
-            // Collect visible text nodes, skipping hidden elements
-            js.append("var textNodes = [];");
-            js.append("var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {");
-            js.append("  acceptNode: function(node) {");
-            js.append("    var el = node.parentElement;");
-            js.append("    if (!el) return NodeFilter.FILTER_REJECT;");
-            js.append("    var tag = el.tagName;");
-            js.append("    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;");
-            // Skip hidden elements (preheader text, display:none, etc.)
-            js.append("    var style = window.getComputedStyle(el);");
-            js.append("    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return NodeFilter.FILTER_REJECT;");
-            js.append("    if (parseFloat(style.maxHeight) === 0 || parseFloat(style.maxWidth) === 0) return NodeFilter.FILTER_REJECT;");
-            js.append("    var text = node.textContent.trim();");
-            // Skip whitespace-only nodes and single non-breaking spaces
-            js.append("    if (text.length === 0 || text === '\u00a0') return NodeFilter.FILTER_REJECT;");
-            js.append("    return NodeFilter.FILTER_ACCEPT;");
-            js.append("  }");
-            js.append("}, false);");
-            js.append("var node;");
-            js.append("while (node = walker.nextNode()) textNodes.push(node);");
-            // Map translated segments to text nodes
-            js.append("if (segments.length === 0) return;");
-            js.append("if (textNodes.length <= 1) {");
-            js.append("  if (textNodes.length === 1) textNodes[0].textContent = segments.join(' ');");
-            js.append("} else {");
-            js.append("  for (var i = 0; i < textNodes.length; i++) {");
-            js.append("    if (i < segments.length) textNodes[i].textContent = segments[i];");
-            js.append("  }");
-            js.append("  if (segments.length > textNodes.length && textNodes.length > 0) {");
-            js.append("    textNodes[textNodes.length-1].textContent += ' ' + segments.slice(textNodes.length).join(' ');");
-            js.append("  }");
-            js.append("}");
+            // Phase 2: Replace text in tagged elements
+            var inject_js = new StringBuilder();
+            inject_js.append("(function() {");
+            inject_js.append("var fullText = '");
+            inject_js.append(js_safe);
+            inject_js.append("';");
+            inject_js.append("var blocks = fullText.split('\n\n').filter(function(s) { return s.trim().length > 0; });");
+
+            // Walk tagged elements and replace their text
+            inject_js.append("var tagged = document.querySelectorAll('[data-translate-id]');");
+            inject_js.append("var bi = 0;");
+            inject_js.append("for (var i = 0; i < tagged.length && bi < blocks.length; i++) {");
+            inject_js.append("  var el = tagged[i];");
+            // Replace only text nodes within this element
+            inject_js.append("  var textNodes = [];");
+            inject_js.append("  for (var j = 0; j < el.childNodes.length; j++) {");
+            inject_js.append("    if (el.childNodes[j].nodeType === 3 && el.childNodes[j].textContent.trim().length > 0) {");
+            inject_js.append("      textNodes.push(el.childNodes[j]);");
+            inject_js.append("    }");
+            inject_js.append("  }");
+            inject_js.append("  if (textNodes.length > 0) {");
+            inject_js.append("    textNodes[0].textContent = blocks[bi];");
+            inject_js.append("    for (var j = 1; j < textNodes.length; j++) textNodes[j].textContent = '';");
+            inject_js.append("    bi++;");
+            inject_js.append("  }");
+            inject_js.append("}");
+
             // Add translation banner
-            js.append("var existing = document.getElementById('geary-translate-banner');");
-            js.append("if (!existing) {");
-            js.append("  var banner = document.createElement('div');");
-            js.append("  banner.id = 'geary-translate-banner';");
-            js.append("  banner.style.cssText = 'background:#e8f4fd;border-left:4px solid #2196F3;padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:12px;color:#1565C0;position:sticky;top:0;z-index:9999;';");
-            js.append("  banner.textContent = 'Translated \u2014 click Translate again to show original';");
-            js.append("  document.body.insertBefore(banner, document.body.firstChild);");
-            js.append("}");
-            js.append("})();");
+            inject_js.append("var existing = document.getElementById('geary-translate-banner');");
+            inject_js.append("if (!existing) {");
+            inject_js.append("  var banner = document.createElement('div');");
+            inject_js.append("  banner.id = 'geary-translate-banner';");
+            inject_js.append("  banner.style.cssText = 'background:#e8f4fd;border-left:4px solid #2196F3;padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:12px;color:#1565C0;position:sticky;top:0;z-index:9999;';");
+            inject_js.append("  banner.textContent = 'Translated \u2014 click Translate again to show original';");
+            inject_js.append("  document.body.insertBefore(banner, document.body.firstChild);");
+            inject_js.append("}");
+            inject_js.append("})();");
 
-            yield email_view.primary_message.evaluate_javascript(js.str, null);
+            yield email_view.primary_message.evaluate_javascript(inject_js.str, null);
             this.is_showing_translation = true;
-        } catch (GLib.Error err) {
-            // Dismiss notification on error too
-            if (this.translating_notification != null) {
-                this.translating_notification.close();
-                this.translating_notification = null;
-            }
+
+        } catch (Error e) {
+            translating_notif.close();
             add_notification(new Components.InAppNotification(
-                _("Translation failed") + ": " + err.message, 10
+                _("Translation failed: %s").printf(e.message)
             ));
-        }
-    }
-
-    private async void restore_original_email() {
-        ConversationEmail? email_view = get_current_email_view();
-        if (email_view == null) {
-            return;
-        }
-
-        try {
-            string restore_js = "if (window._gearyOriginalBody) { document.body.innerHTML = window._gearyOriginalBody; window._gearyOriginalBody = null; }";
-            yield email_view.primary_message.evaluate_javascript(restore_js, null);
-            this.is_showing_translation = false;
-        } catch (Error err) {
-            warning("Failed to restore original email: %s", err.message);
         }
     }
 
