@@ -254,42 +254,99 @@ public class Components.PreferencesWindow : Hdy.PreferencesWindow {
     private void add_ai_pane() {
         var group = new Hdy.PreferencesGroup();
         group.title = _("Gemini AI");
-        group.description = _("Configure Google Gemini for AI-powered email composition");
+        group.description = _("Configure Google Gemini for AI-powered email composition.\nGet a free API key at aistudio.google.com/apikey");
 
         var api_key_row = new Hdy.ActionRow();
         api_key_row.title = _("API Key");
-        api_key_row.subtitle = _("Get one at aistudio.google.com/apikey");
 
         var api_key_entry = new Gtk.Entry();
-        api_key_entry.placeholder_text = _("Paste your Gemini API key");
-        api_key_entry.visibility = false;  // Hidden like a password
+        api_key_entry.placeholder_text = _("Paste your Gemini API key here");
+        api_key_entry.visibility = false;
         api_key_entry.input_purpose = Gtk.InputPurpose.PASSWORD;
         api_key_entry.valign = Gtk.Align.CENTER;
-        api_key_entry.width_chars = 30;
+        api_key_entry.width_chars = 35;
 
         // Load current key
         Application.Client? application = this.application;
-        if (application != null && application.gemini_service.is_configured()) {
+        if (application != null) {
             string? current = application.gemini_service.get_api_key();
             if (current != null) {
                 api_key_entry.text = current;
             }
         }
 
-        // Save on change
-        api_key_entry.changed.connect(() => {
-            if (application != null) {
-                string val = api_key_entry.text.strip();
-                application.gemini_service.set_api_key(val.length > 0 ? val : null);
-            }
-        });
-
         api_key_row.add(api_key_entry);
         group.add(api_key_row);
 
+        // Save button
+        var save_row = new Hdy.ActionRow();
+        var button_box = new Gtk.Box(Gtk.Orientation.HORIZONTAL, 8);
+        button_box.valign = Gtk.Align.CENTER;
+
+        var save_button = new Gtk.Button.with_label(_("Save"));
+        save_button.get_style_context().add_class("suggested-action");
+
+        var test_button = new Gtk.Button.with_label(_("Test"));
+
+        var status_label = new Gtk.Label("");
+        status_label.xalign = 0;
+
+        // Show current status
+        if (application != null && application.gemini_service.is_configured()) {
+            status_label.label = _("\u2705 API key configured");
+        } else {
+            status_label.label = _("\u274c No API key set");
+        }
+
+        save_button.clicked.connect(() => {
+            if (application != null) {
+                string val = api_key_entry.text.strip();
+                if (val.length > 0) {
+                    application.gemini_service.set_api_key(val);
+                    status_label.label = _("\u2705 API key saved");
+                } else {
+                    application.gemini_service.set_api_key(null);
+                    status_label.label = _("\u274c API key cleared");
+                }
+            }
+        });
+
+        test_button.clicked.connect(() => {
+            if (application == null) return;
+            string val = api_key_entry.text.strip();
+            if (val.length == 0) {
+                status_label.label = _("\u274c Enter an API key first");
+                return;
+            }
+            // Save first
+            application.gemini_service.set_api_key(val);
+            status_label.label = _("\u23f3 Testing...");
+            // Test with a simple prompt
+            application.gemini_service.help_compose.begin("Say hello in one word", null, (obj, res) => {
+                try {
+                    string? result = application.gemini_service.help_compose.end(res);
+                    if (result != null && result.strip().length > 0) {
+                        status_label.label = _("\u2705 Working! Response: %s").printf(
+                            result.strip().substring(0, int.min(50, result.strip().length))
+                        );
+                    } else {
+                        status_label.label = _("\u26a0 Empty response");
+                    }
+                } catch (GLib.Error e) {
+                    status_label.label = _("\u274c Error: %s").printf(e.message);
+                }
+            });
+        });
+
+        button_box.pack_start(save_button, false, false, 0);
+        button_box.pack_start(test_button, false, false, 0);
+        button_box.pack_start(status_label, true, true, 8);
+        save_row.add(button_box);
+        group.add(save_row);
+
         var page = new Hdy.PreferencesPage();
         page.title = _("AI");
-        page.icon_name = "dialog-information-symbolic";
+        page.icon_name = "accessories-text-editor-symbolic";
         page.add(group);
         page.show_all();
 

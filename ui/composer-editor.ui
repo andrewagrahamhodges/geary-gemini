@@ -81,7 +81,7 @@
                 <child>
                   <object class="GtkImage">
                     <property name="visible">True</property>
-                    <property name="icon_name">starred-symbolic</property>
+                    <property name="icon_name">accessories-text-editor-symbolic</property>
                     <property name="pixel_size">16</property>
                   </object>
                   <packing>
@@ -596,14 +596,14 @@
                 <property name="visible">True</property>
                 <property name="focus_on_click">False</property>
                 <property name="receives_default">False</property>
-                <property name="tooltip_text" translatable="yes">AI Writing Help</property>
+                <property name="tooltip_text" translatable="yes">AI Writer (Gemini)</property>
                 <property name="action_name">edt.ai-help</property>
                 <property name="always_show_image">True</property>
                 <child>
                   <object class="GtkImage" id="ai_help_image">
                     <property name="visible">True</property>
                     <property name="pixel_size">16</property>
-                    <property name="icon_name">starred-symbolic</property>
+                    <property name="icon_name">accessories-text-editor-symbolic</property>
                   </object>
                 </child>
               </object>
