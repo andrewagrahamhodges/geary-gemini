@@ -2462,13 +2462,26 @@ public class Application.MainWindow :
             return;
         }
 
-        string? body = get_displayed_email_text();
-        // do_translate_inline handles both translate and restore
-        do_translate_inline.begin(body ?? "");
+        // Always pass through to do_translate_inline which handles
+        // both translate and restore (toggle) modes
+        do_translate_inline.begin("");
     }
 
     private async void do_translate_inline(string body) {
-        var email_view = get_current_email_view();
+        // Try to get the email view, with a short retry if not ready yet
+        ConversationEmail? email_view = get_current_email_view();
+        if (email_view == null) {
+            // Email may not be fully loaded yet — wait briefly and retry
+            GLib.Timeout.add(250, do_translate_inline.callback);
+            yield;
+            email_view = get_current_email_view();
+        }
+        if (email_view == null) {
+            // One more try after a longer wait
+            GLib.Timeout.add(500, do_translate_inline.callback);
+            yield;
+            email_view = get_current_email_view();
+        }
         if (email_view == null) {
             add_notification(new Components.InAppNotification(
                 _("No email is currently displayed")
