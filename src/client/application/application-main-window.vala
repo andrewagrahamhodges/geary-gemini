@@ -2451,11 +2451,19 @@ public class Application.MainWindow :
     }
 
 
+    private bool is_showing_translation = false;
+
     private void on_translate_conversation() {
         if (!this.application.translation_service.is_available()) {
             add_notification(new Components.InAppNotification(
                 _("translate-shell is not installed")
             ));
+            return;
+        }
+
+        // If already showing translation, restore original
+        if (this.is_showing_translation) {
+            restore_original_email.begin();
             return;
         }
 
@@ -2467,27 +2475,91 @@ public class Application.MainWindow :
             return;
         }
 
-        this.application.translation_service.translate.begin(body, null, (obj, res) => {
-            try {
-                string? translated = this.application.translation_service.translate.end(res);
-                if (Geary.String.is_empty_or_whitespace(translated)) {
-                    add_notification(new Components.InAppNotification(
-                        _("Translation returned no text")
-                    ));
-                    return;
-                }
+        do_translate_inline.begin(body);
+    }
 
-                string message = _("Translation") + ":
+    private async void do_translate_inline(string body) {
+        // Get the current email view
+        ConversationEmail? email_view = get_current_email_view();
+        if (email_view == null) {
+            add_notification(new Components.InAppNotification(
+                _("No email view available")
+            ));
+            return;
+        }
 
-" + translated;
-                add_notification(new Components.InAppNotification(message, 10));
-            } catch (GLib.Error err) {
+        // Store original HTML before replacing
+        try {
+            string store_js = "if (!window._gearyOriginalBody) { window._gearyOriginalBody = document.body.innerHTML; }";
+            yield email_view.primary_message.evaluate_javascript(store_js, null);
+        } catch (Error store_err) {
+            warning("Failed to store original HTML: %s", store_err.message);
+        }
+
+        // Show translating indicator
+        add_notification(new Components.InAppNotification(_("Translating..."), 30));
+
+        try {
+            string? translated = yield this.application.translation_service.translate(body, null);
+            if (Geary.String.is_empty_or_whitespace(translated)) {
                 add_notification(new Components.InAppNotification(
-                    _("Translation failed") + ": " + err.message,
-                    10
+                    _("Translation returned no text")
                 ));
+                return;
             }
-        });
+
+            // Build the HTML content for injection
+            string safe_text = GLib.Markup.escape_text(translated);
+            safe_text = safe_text.replace("\n", "<br>");
+
+            // Build JavaScript to replace body content
+            var js = new StringBuilder();
+            js.append("(function() {");
+            js.append("var banner = document.createElement('div');");
+            js.append("banner.style.cssText = 'background:#e8f4fd;border-left:4px solid #2196F3;padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:12px;color:#1565C0;';");
+            js.append("banner.textContent = 'Translated \u2014 click Translate again to show original';");
+            js.append("var content = document.createElement('div');");
+            js.append("content.innerHTML = '");
+            // Escape for JS string literal
+            string js_safe = safe_text.replace("\\", "\\\\");
+            js_safe = js_safe.replace("'", "\\'");
+            js.append(js_safe);
+            js.append("';");
+            js.append("document.body.innerHTML = '';");
+            js.append("document.body.appendChild(banner);");
+            js.append("document.body.appendChild(content);");
+            js.append("})();");
+
+            yield email_view.primary_message.evaluate_javascript(js.str, null);
+            this.is_showing_translation = true;
+        } catch (GLib.Error err) {
+            add_notification(new Components.InAppNotification(
+                _("Translation failed") + ": " + err.message, 10
+            ));
+        }
+    }
+
+    private async void restore_original_email() {
+        ConversationEmail? email_view = get_current_email_view();
+        if (email_view == null) {
+            return;
+        }
+
+        try {
+            string restore_js = "if (window._gearyOriginalBody) { document.body.innerHTML = window._gearyOriginalBody; window._gearyOriginalBody = null; }";
+            yield email_view.primary_message.evaluate_javascript(restore_js, null);
+            this.is_showing_translation = false;
+        } catch (Error err) {
+            warning("Failed to restore original email: %s", err.message);
+        }
+    }
+
+    private ConversationEmail? get_current_email_view() {
+        if (this.conversation_viewer == null || this.conversation_viewer.current_list == null) {
+            return null;
+        }
+        // Use reply target — this is the currently focused/expanded email
+        return this.conversation_viewer.current_list.get_reply_target();
     }
 
 
