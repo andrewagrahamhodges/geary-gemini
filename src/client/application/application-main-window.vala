@@ -2452,6 +2452,7 @@ public class Application.MainWindow :
 
 
     private bool is_showing_translation = false;
+    private Components.InAppNotification? translating_notification = null;
 
     private void on_translate_conversation() {
         if (!this.application.translation_service.is_available()) {
@@ -2496,11 +2497,19 @@ public class Application.MainWindow :
             warning("Failed to store original HTML: %s", store_err.message);
         }
 
-        // Show translating indicator
-        add_notification(new Components.InAppNotification(_("Translating..."), 30));
+        // Show translating notification (dismiss when done)
+        this.translating_notification = new Components.InAppNotification(_("Translating..."), 60);
+        add_notification(this.translating_notification);
 
         try {
             string? translated = yield this.application.translation_service.translate(body, null);
+
+            // Dismiss the translating notification
+            if (this.translating_notification != null) {
+                this.translating_notification.close();
+                this.translating_notification = null;
+            }
+
             if (Geary.String.is_empty_or_whitespace(translated)) {
                 add_notification(new Components.InAppNotification(
                     _("Translation returned no text")
@@ -2508,31 +2517,75 @@ public class Application.MainWindow :
                 return;
             }
 
-            // Build the HTML content for injection
-            string safe_text = GLib.Markup.escape_text(translated);
-            safe_text = safe_text.replace("\n", "<br>");
+            // Split translated text into lines for text-node replacement
+            string[] translated_lines = translated.split("\n");
 
-            // Build JavaScript to replace body content
+            // Build JavaScript that walks text nodes and replaces text content
+            // while preserving HTML structure (images, links, formatting)
             var js = new StringBuilder();
             js.append("(function() {");
-            js.append("var banner = document.createElement('div');");
-            js.append("banner.style.cssText = 'background:#e8f4fd;border-left:4px solid #2196F3;padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:12px;color:#1565C0;';");
-            js.append("banner.textContent = 'Translated \u2014 click Translate again to show original';");
-            js.append("var content = document.createElement('div');");
-            js.append("content.innerHTML = '");
-            // Escape for JS string literal
-            string js_safe = safe_text.replace("\\", "\\\\");
-            js_safe = js_safe.replace("'", "\\'");
-            js.append(js_safe);
-            js.append("';");
-            js.append("document.body.innerHTML = '';");
-            js.append("document.body.appendChild(banner);");
-            js.append("document.body.appendChild(content);");
+            // Collect all text nodes in document order
+            js.append("var textNodes = [];");
+            js.append("var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);");
+            js.append("var node;");
+            js.append("while (node = walker.nextNode()) {");
+            js.append("  var t = node.textContent.trim();");
+            js.append("  if (t.length > 0) textNodes.push(node);");
+            js.append("}");
+            // Build the translated lines array in JS
+            js.append("var translated = [");
+            for (int i = 0; i < translated_lines.length; i++) {
+                string line = translated_lines[i].strip();
+                if (line.length == 0) {
+                    continue;
+                }
+                // Escape for JS string
+                string js_line = line.replace("\\", "\\\\");
+                js_line = js_line.replace("'", "\\'");
+                if (i > 0) {
+                    js.append(",");
+                }
+                js.append("'");
+                js.append(js_line);
+                js.append("'");
+            }
+            js.append("];");
+            // Replace text nodes with translated lines (1:1 mapping where possible)
+            js.append("var combined = translated.join(' ');");
+            js.append("if (textNodes.length === 1 || translated.length <= 1) {");
+            js.append("  textNodes.forEach(function(n, i) {");
+            js.append("    if (i === 0) n.textContent = combined;");
+            js.append("    else n.textContent = '';");
+            js.append("  });");
+            js.append("} else {");
+            js.append("  for (var i = 0; i < textNodes.length; i++) {");
+            js.append("    if (i < translated.length) textNodes[i].textContent = translated[i];");
+            js.append("    else textNodes[i].textContent = '';");
+            js.append("  }");
+            js.append("  if (translated.length > textNodes.length && textNodes.length > 0) {");
+            js.append("    var extra = translated.slice(textNodes.length).join(' ');");
+            js.append("    textNodes[textNodes.length-1].textContent += ' ' + extra;");
+            js.append("  }");
+            js.append("}");
+            // Add translation banner at top of body
+            js.append("var existing = document.getElementById('geary-translate-banner');");
+            js.append("if (!existing) {");
+            js.append("  var banner = document.createElement('div');");
+            js.append("  banner.id = 'geary-translate-banner';");
+            js.append("  banner.style.cssText = 'background:#e8f4fd;border-left:4px solid #2196F3;padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:12px;color:#1565C0;';");
+            js.append("  banner.textContent = 'Translated — click Translate again to show original';");
+            js.append("  document.body.insertBefore(banner, document.body.firstChild);");
+            js.append("}");
             js.append("})();");
 
             yield email_view.primary_message.evaluate_javascript(js.str, null);
             this.is_showing_translation = true;
         } catch (GLib.Error err) {
+            // Dismiss notification on error too
+            if (this.translating_notification != null) {
+                this.translating_notification.close();
+                this.translating_notification = null;
+            }
             add_notification(new Components.InAppNotification(
                 _("Translation failed") + ": " + err.message, 10
             ));
