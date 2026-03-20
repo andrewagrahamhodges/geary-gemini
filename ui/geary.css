@@ -86,6 +86,25 @@ row.conversation-list .date {
   margin-left: 1em;
 }
 
+/* Read message styling — grey text so unread messages stand out */
+row.conversation-list:not(.unread) .subject {
+  font-weight: normal;
+  color: #888888;
+}
+
+row.conversation-list:not(.unread) .participants {
+  font-weight: normal;
+  color: #888888;
+}
+
+row.conversation-list:not(.unread) .date {
+  color: #888888;
+}
+
+row.conversation-list:not(.unread) .preview {
+  color: #777777;
+}
+
 /* Unread styling */
 row.conversation-list.unread .subject {
   font-weight: bold;
