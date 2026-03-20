@@ -30,6 +30,7 @@ public class Components.ConversationHeaderBar : Gtk.Bin {
 
     [GtkChild] private unowned Gtk.ToggleButton find_button;
     [GtkChild] public unowned Gtk.Button back_button;
+    [GtkChild] public unowned Gtk.Button translate_button;
 
     [GtkChild] private unowned Hdy.HeaderBar conversation_header;
 

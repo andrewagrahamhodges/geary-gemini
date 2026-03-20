@@ -29,6 +29,7 @@ public class Application.MainWindow :
     public const string ACTION_SHOW_COPY_MENU = "show-copy-menu";
     public const string ACTION_TOGGLE_JUNK = "toggle-conversation-junk";
     public const string ACTION_TRASH_CONVERSATION = "trash-conversation";
+    public const string ACTION_TRANSLATE_CONVERSATION = "translate-conversation";
     public const string ACTION_ZOOM = "zoom";
     public const string ACTION_NAVIGATION_BACK = "navigation-back";
 
@@ -55,6 +56,7 @@ public class Application.MainWindow :
         { ACTION_TRASH_CONVERSATION, on_trash_conversation },
         { ACTION_DELETE_CONVERSATION, on_delete_conversation },
         { ACTION_SHOW_COPY_MENU, on_show_copy_menu },
+        { ACTION_TRANSLATE_CONVERSATION, on_translate_conversation },
         { ACTION_CONVERSATION_UP, on_conversation_up },
         { ACTION_CONVERSATION_DOWN, on_conversation_down },
         // Message marking actions
@@ -1867,6 +1869,8 @@ public class Application.MainWindow :
         get_window_action(ACTION_REPLY_CONVERSATION).set_enabled(reply_sensitive);
         get_window_action(ACTION_REPLY_ALL_CONVERSATION).set_enabled(reply_sensitive);
         get_window_action(ACTION_FORWARD_CONVERSATION).set_enabled(reply_sensitive);
+        get_window_action(ACTION_TRANSLATE_CONVERSATION).set_enabled(reply_sensitive);
+        this.conversation_headerbar.translate_button.sensitive = reply_sensitive;
 
         bool copy_enabled = (
             sensitive && (this.selected_folder is Geary.FolderSupport.Copy)
@@ -2444,6 +2448,46 @@ public class Application.MainWindow :
 
     private void on_forward_conversation() {
         reply_conversation(FORWARD);
+    }
+
+
+    private void on_translate_conversation() {
+        if (!this.application.translation_service.is_available()) {
+            add_notification(new Components.InAppNotification(
+                _("translate-shell is not installed")
+            ));
+            return;
+        }
+
+        string? body = get_displayed_email_text();
+        if (Geary.String.is_empty_or_whitespace(body)) {
+            add_notification(new Components.InAppNotification(
+                _("No message text is available to translate")
+            ));
+            return;
+        }
+
+        this.application.translation_service.translate.begin(body, null, (obj, res) => {
+            try {
+                string? translated = this.application.translation_service.translate.end(res);
+                if (Geary.String.is_empty_or_whitespace(translated)) {
+                    add_notification(new Components.InAppNotification(
+                        _("Translation returned no text")
+                    ));
+                    return;
+                }
+
+                string message = _("Translation") + ":
+
+" + translated;
+                add_notification(new Components.InAppNotification(message, 10));
+            } catch (GLib.Error err) {
+                add_notification(new Components.InAppNotification(
+                    _("Translation failed") + ": " + err.message,
+                    10
+                ));
+            }
+        });
     }
 
 

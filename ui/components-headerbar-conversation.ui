@@ -54,6 +54,29 @@
         </child>
 
         <child>
+          <object class="GtkButton" id="translate_button">
+            <property name="visible">True</property>
+            <property name="receives_default">False</property>
+            <property name="focus_on_click">False</property>
+            <property name="tooltip_text" translatable="yes">Translate message</property>
+            <property name="action_name">win.translate-conversation</property>
+            <style>
+              <class name="image-button"/>
+            </style>
+            <child>
+              <object class="GtkImage">
+                <property name="visible">True</property>
+                <property name="icon_name">preferences-desktop-locale-symbolic</property>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="pack_type">end</property>
+            <property name="position">2</property>
+          </packing>
+        </child>
+
+        <child>
           <object class="GtkToggleButton" id="find_button">
             <property name="visible">True</property>
             <property name="focus_on_click">False</property>

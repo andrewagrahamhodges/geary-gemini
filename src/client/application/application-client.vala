@@ -149,6 +149,10 @@ public class Application.Client : Gtk.Application {
         get; private set;
     }
 
+    public Translation.Service translation_service {
+        get; private set;
+    }
+
     /**
      * The user's desktop settings for the application.
      *
@@ -362,6 +366,7 @@ public class Application.Client : Gtk.Application {
         this.engine = new Geary.Engine(get_resource_directory());
         this.config = new Configuration(SCHEMA_ID);
         this.gemini_service = new Gemini.Service();
+        this.translation_service = new Translation.Service();
         this.autostart = new StartupManager(this);
 
         // Ensure all geary windows have an icon
