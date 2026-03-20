@@ -2577,7 +2577,48 @@ public class Composer.Widget : Gtk.EventBox, Geary.BaseInterface {
             main_window.add_notification(generating_notif);
         }
 
-        app.gemini_service.help_compose.begin(prompt, null, (obj, res) => {
+        // Gather conversation context for replies
+        do_ai_generate.begin(app, prompt, main_window, generating_notif);
+    }
+
+    private async void do_ai_generate(
+        Application.Client app,
+        string prompt,
+        Application.MainWindow? main_window,
+        Components.InAppNotification? generating_notif
+    ) {
+        // Get the quoted/reply text as context for Gemini
+        string? context = null;
+        try {
+            context = yield this.editor.body.get_text();
+        } catch (Error e) {
+            // Non-fatal, just proceed without context
+        }
+
+        // Also add subject and recipient info
+        var context_builder = new StringBuilder();
+        if (this.context_type != ContextType.NONE) {
+            context_builder.append("This is a %s.\n".printf(
+                this.context_type == ContextType.REPLY_SENDER ? "reply" :
+                this.context_type == ContextType.REPLY_ALL ? "reply-all" :
+                this.context_type == ContextType.FORWARD ? "forward" : "new email"
+            ));
+        }
+        if (this.subject.strip().length > 0) {
+            context_builder.append("Subject: %s\n".printf(this.subject));
+        }
+        if (this.to.strip().length > 0) {
+            context_builder.append("To: %s\n".printf(this.to));
+        }
+        if (!Geary.String.is_empty_or_whitespace(context)) {
+            context_builder.append("\nConversation so far:\n");
+            context_builder.append(context);
+        }
+
+        string? full_context = context_builder.str.strip().length > 0
+            ? context_builder.str : null;
+
+        app.gemini_service.help_compose.begin(prompt, full_context, (obj, res) => {
             try {
                 string? response = app.gemini_service.help_compose.end(res);
                 if (generating_notif != null) {
