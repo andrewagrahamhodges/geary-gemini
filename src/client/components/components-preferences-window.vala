@@ -207,6 +207,8 @@ public class Components.PreferencesWindow : Hdy.PreferencesWindow {
 
         add(page);
 
+        add_ai_pane();
+
         GLib.SimpleActionGroup window_actions = new GLib.SimpleActionGroup();
         window_actions.add_action_entries(WINDOW_ACTIONS, this);
         insert_action_group(Action.Window.GROUP_NAME, window_actions);
@@ -249,7 +251,52 @@ public class Components.PreferencesWindow : Hdy.PreferencesWindow {
         }
     }
 
-    private void add_plugin_pane() {
+    private void add_ai_pane() {
+        var group = new Hdy.PreferencesGroup();
+        group.title = _("Gemini AI");
+        group.description = _("Configure Google Gemini for AI-powered email composition");
+
+        var api_key_row = new Hdy.ActionRow();
+        api_key_row.title = _("API Key");
+        api_key_row.subtitle = _("Get one at aistudio.google.com/apikey");
+
+        var api_key_entry = new Gtk.Entry();
+        api_key_entry.placeholder_text = _("Paste your Gemini API key");
+        api_key_entry.visibility = false;  // Hidden like a password
+        api_key_entry.input_purpose = Gtk.InputPurpose.PASSWORD;
+        api_key_entry.valign = Gtk.Align.CENTER;
+        api_key_entry.width_chars = 30;
+
+        // Load current key
+        Application.Client? application = this.application;
+        if (application != null && application.gemini_service.is_configured()) {
+            string? current = application.gemini_service.get_api_key();
+            if (current != null) {
+                api_key_entry.text = current;
+            }
+        }
+
+        // Save on change
+        api_key_entry.changed.connect(() => {
+            if (application != null) {
+                string val = api_key_entry.text.strip();
+                application.gemini_service.set_api_key(val.length > 0 ? val : null);
+            }
+        });
+
+        api_key_row.add(api_key_entry);
+        group.add(api_key_row);
+
+        var page = new Hdy.PreferencesPage();
+        page.title = _("AI");
+        page.icon_name = "dialog-information-symbolic";
+        page.add(group);
+        page.show_all();
+
+        add(page);
+    }
+
+        private void add_plugin_pane() {
         var group = new Hdy.PreferencesGroup();
         /// Translators: Preferences group title
         //group.title = _("Plugins");

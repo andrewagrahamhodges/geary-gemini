@@ -2558,14 +2558,52 @@ public class Composer.Widget : Gtk.EventBox, Geary.BaseInterface {
             return;
         }
 
+        if (!app.gemini_service.is_configured()) {
+            // Show error in the main window
+            var main_window = this.container.top_window as Application.MainWindow;
+            if (main_window != null) {
+                main_window.add_notification(new Components.InAppNotification(
+                    _("Gemini API key not configured. Set it in Preferences \u2192 AI.")
+                ));
+            }
+            return;
+        }
+
+        // Show generating notification
+        var main_window = this.container.top_window as Application.MainWindow;
+        Components.InAppNotification? generating_notif = null;
+        if (main_window != null) {
+            generating_notif = new Components.InAppNotification(_("AI is generating..."), 60);
+            main_window.add_notification(generating_notif);
+        }
+
         app.gemini_service.help_compose.begin(prompt, null, (obj, res) => {
             try {
                 string? response = app.gemini_service.help_compose.end(res);
+                if (generating_notif != null) {
+                    generating_notif.close();
+                }
                 if (!Geary.String.is_empty_or_whitespace(response)) {
-                    this.editor.body.insert_html(response);
+                    this.editor.body.insert_html(
+                        "<p>" + response.replace("\n", "<br>") + "</p>"
+                    );
+                } else {
+                    if (main_window != null) {
+                        main_window.add_notification(new Components.InAppNotification(
+                            _("AI returned empty response")
+                        ));
+                    }
                 }
             } catch (GLib.Error err) {
+                if (generating_notif != null) {
+                    generating_notif.close();
+                }
                 warning("AI compose failed: %s", err.message);
+                if (main_window != null) {
+                    main_window.add_notification(new Components.InAppNotification(
+                        _("AI error: %s").printf(err.message)
+                    ));
+                }
             }
         });
     }
