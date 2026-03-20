@@ -1,13 +1,33 @@
 /*
- * Minimal translation service integration.
+ * Translation service — wraps translate-shell (trans) CLI.
+ * Checks bundled binary at /usr/share/geary-gemini/bin/trans first,
+ * then falls back to system PATH.
  */
 
 namespace Translation {
 
 public class Service : GLib.Object {
 
+    private string? _trans_path = null;
+
+    private string? find_trans_binary() {
+        if (this._trans_path != null) {
+            return this._trans_path;
+        }
+        string bundled = "/usr/share/geary-gemini/bin/trans";
+        if (GLib.FileUtils.test(bundled, GLib.FileTest.IS_EXECUTABLE)) {
+            this._trans_path = bundled;
+            return bundled;
+        }
+        string? system_path = GLib.Environment.find_program_in_path("trans");
+        if (system_path != null) {
+            this._trans_path = system_path;
+        }
+        return this._trans_path;
+    }
+
     public bool is_available() {
-        return GLib.Environment.find_program_in_path("trans") != null;
+        return find_trans_binary() != null;
     }
 
     public async string? detect_language(string text) throws GLib.Error {
@@ -15,12 +35,16 @@ public class Service : GLib.Object {
             return null;
         }
 
+        string? trans = find_trans_binary();
+        if (trans == null) {
+            throw new GLib.IOError.NOT_FOUND("translate-shell (trans) not found");
+        }
+
         string[] argv = {
-            "trans",
+            trans,
             "-brief",
             "-identify",
-            text,
-            null
+            text
         };
 
         return yield run_command(argv);
@@ -32,12 +56,16 @@ public class Service : GLib.Object {
         }
 
         string language = target_lang ?? get_default_target_language();
+        string? trans = find_trans_binary();
+        if (trans == null) {
+            throw new GLib.IOError.NOT_FOUND("translate-shell (trans) not found");
+        }
+
         string[] argv = {
-            "trans",
+            trans,
             "-brief",
             ":%s".printf(language),
-            text,
-            null
+            text
         };
 
         return yield run_command(argv);

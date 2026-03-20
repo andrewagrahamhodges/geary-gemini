@@ -62,6 +62,11 @@ services:
         rm -rf "$$GEMINI_DIR/node/share" "$$GEMINI_DIR/node/include"
 
 
+        echo "Bundling translate-shell..."
+        mkdir -p "$$STAGING/usr/share/geary-gemini/bin"
+        cp /usr/local/bin/trans "$$STAGING/usr/share/geary-gemini/bin/trans"
+        chmod +x "$$STAGING/usr/share/geary-gemini/bin/trans"
+
         VERSION=$$(grep -m1 "version:" /src/meson.build | cut -d"'" -f2)
         mkdir -p $$STAGING/DEBIAN
         cat > $$STAGING/DEBIAN/control << EOF
