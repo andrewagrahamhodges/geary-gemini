@@ -20,6 +20,13 @@ public class Gemini.Service : GLib.Object {
     private const string NODE_BINARY = "/usr/share/geary-gemini/node/bin/node";
     private const string GEMINI_BINARY = "/usr/share/geary-gemini/node_modules/.bin/gemini";
 
+    // gemini-cli config paths
+    private const string GEMINI_CONFIG_DIR = ".gemini";
+    private const string GOOGLE_ACCOUNTS_FILE = "google_accounts.json";
+
+    /** The currently active Gemini account email, or null. */
+    public string? active_account { get; private set; default = null; }
+
     // System prompt for Gemini chat - direct context mode (no MCP).
     private const string SYSTEM_PROMPT =
         "You are an AI assistant integrated into the Geary email client. You help users with their emails.\n\n" +
@@ -47,6 +54,39 @@ public class Gemini.Service : GLib.Object {
      */
     public signal void authentication_completed(bool success, string? error_message);
 
+
+    internal string? extract_first_url(string? text) {
+        if (text == null || text.length == 0) {
+            return null;
+        }
+
+        try {
+            var regex = new Regex("(https?://[^\\s<>\"']+[^\\s<>\"'.,;:!?\\)\\]])");
+            MatchInfo info;
+            if (regex.match(text, 0, out info)) {
+                return info.fetch(1);
+            }
+        } catch (RegexError e) {
+            // Ignore regex errors
+        }
+
+        return null;
+    }
+
+    private bool open_auth_url(string? url) {
+        if (url == null || url.length == 0) {
+            return false;
+        }
+
+        try {
+            AppInfo.launch_default_for_uri(url, null);
+            return true;
+        } catch (Error e) {
+            warning("Failed to open auth URL: %s", e.message);
+            return false;
+        }
+    }
+
     /**
      * Check if gemini-cli is installed (bundled with the package).
      */
@@ -63,8 +103,11 @@ public class Gemini.Service : GLib.Object {
         }
 
         try {
-            var subprocess = new Subprocess(
-                SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE,
+            var launcher = new SubprocessLauncher(
+                SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE
+            );
+            launcher.setenv("NODE_NO_WARNINGS", "1", true);
+            var subprocess = launcher.spawn(
                 NODE_BINARY, GEMINI_BINARY, "auth", "status"
             );
             yield subprocess.wait_async();
@@ -76,22 +119,81 @@ public class Gemini.Service : GLib.Object {
 
     /**
      * Authenticate with Google (opens browser).
+     * Streams output line-by-line so the auth URL is opened immediately.
      */
     public async void authenticate() throws Error {
         if (!is_installed()) {
             throw new IOError.NOT_FOUND("Gemini CLI is not installed. Please reinstall geary-gemini.");
         }
 
-        var subprocess = new Subprocess(
-            SubprocessFlags.NONE,  // Interactive - opens browser
+        var launcher = new SubprocessLauncher(
+            SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE
+        );
+        launcher.setenv("NODE_NO_WARNINGS", "1", true);
+        var subprocess = launcher.spawn(
             NODE_BINARY, GEMINI_BINARY, "auth", "login"
         );
 
+        // Stream stdout and stderr to capture the auth URL as soon as it appears
+        var stdout_stream = new DataInputStream(subprocess.get_stdout_pipe());
+        var stderr_stream = new DataInputStream(subprocess.get_stderr_pipe());
+        var output = new StringBuilder();
+        string? auth_url = null;
+
+        // Read stdout lines
+        try {
+            string? line;
+            while ((line = yield stdout_stream.read_line_async()) != null) {
+                output.append(line);
+                output.append("\n");
+                if (auth_url == null) {
+                    auth_url = extract_first_url(line);
+                    if (auth_url != null) {
+                        open_auth_url(auth_url);
+                    }
+                }
+            }
+        } catch (Error e) {
+            // Stream ended
+        }
+
+        // Read stderr lines
+        try {
+            string? line;
+            while ((line = yield stderr_stream.read_line_async()) != null) {
+                output.append(line);
+                output.append("\n");
+                if (auth_url == null) {
+                    auth_url = extract_first_url(line);
+                    if (auth_url != null) {
+                        open_auth_url(auth_url);
+                    }
+                }
+            }
+        } catch (Error e) {
+            // Stream ended
+        }
+
         yield subprocess.wait_async();
+        string combined = output.str;
 
         if (!subprocess.get_successful()) {
-            authentication_completed(false, "Authentication failed");
-            throw new IOError.FAILED("Authentication failed");
+            // Some gemini-cli versions emit "Loaded cached credentials" and exit non-zero.
+            // Treat as success if auth status is already valid.
+            bool authed = yield check_authenticated();
+            if (!authed) {
+                string cleaned = filter_non_fatal_warnings(combined);
+                string msg;
+                if (auth_url != null) {
+                    msg = "Authentication failed. Open this URL to continue login: %s".printf(auth_url);
+                } else if (cleaned.length > 0) {
+                    msg = "Authentication failed: %s".printf(cleaned);
+                } else {
+                    msg = "Authentication failed";
+                }
+                authentication_completed(false, msg);
+                throw new IOError.FAILED(msg);
+            }
         }
 
         authentication_completed(true, null);
@@ -112,6 +214,34 @@ public class Gemini.Service : GLib.Object {
      */
     public delegate void StructuredStreamCallback(string msg_type, string content, string? tool_name, string? tool_input_json);
 
+    internal string filter_non_fatal_warnings(string? stderr_text) {
+        if (stderr_text == null || stderr_text.length == 0) {
+            return "";
+        }
+
+        var kept = new StringBuilder();
+        foreach (string raw_line in stderr_text.split("\n")) {
+            string line = raw_line.strip();
+            if (line.length == 0) {
+                continue;
+            }
+
+            // Ignore Node deprecation noise from dependency chains
+            if (line.contains("[DEP0040]") ||
+                line.contains("The punycode module is deprecated") ||
+                line.contains("Loaded cached credentials") ||
+                line.has_prefix("(Use `node --trace-deprecation") ||
+                line.has_prefix("(node:")) {
+                continue;
+            }
+
+            kept.append(line);
+            kept.append("\n");
+        }
+
+        return kept.str.strip();
+    }
+
     /**
      * Run a prompt through gemini-cli and return the response.
      */
@@ -122,10 +252,19 @@ public class Gemini.Service : GLib.Object {
             );
         }
 
-        var subprocess = new Subprocess(
-            SubprocessFlags.STDIN_PIPE | SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE,
-            NODE_BINARY, GEMINI_BINARY, "-p", prompt
+        var launcher = new SubprocessLauncher(
+            SubprocessFlags.STDIN_PIPE | SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE
         );
+        launcher.setenv("NODE_NO_WARNINGS", "1", true);
+        var subprocess = launcher.spawn(
+            NODE_BINARY, GEMINI_BINARY, "-p", "-"
+        );
+
+        // Write prompt via stdin to avoid exposing email content in /proc/cmdline
+        var stdin_stream = subprocess.get_stdin_pipe();
+        var prompt_bytes = new GLib.Bytes(prompt.data);
+        yield stdin_stream.write_bytes_async(prompt_bytes);
+        yield stdin_stream.close_async();
 
         string? stdout_buf = null;
         string? stderr_buf = null;
@@ -147,12 +286,18 @@ public class Gemini.Service : GLib.Object {
                 // Stream ended
             }
 
-            // Read any stderr
+            // Read all stderr lines
+            var stderr_builder = new StringBuilder();
             try {
-                stderr_buf = yield stderr_stream.read_line_async();
+                string? err_line;
+                while ((err_line = yield stderr_stream.read_line_async()) != null) {
+                    stderr_builder.append(err_line);
+                    stderr_builder.append("\n");
+                }
             } catch (Error e) {
-                // Ignore
+                // Stream ended
             }
+            stderr_buf = stderr_builder.str;
 
             yield subprocess.wait_async();
             stdout_buf = output_builder.str;
@@ -160,14 +305,24 @@ public class Gemini.Service : GLib.Object {
             yield subprocess.communicate_utf8_async(null, null, out stdout_buf, out stderr_buf);
         }
 
+        string stderr_clean = filter_non_fatal_warnings(stderr_buf);
+
         if (!subprocess.get_successful()) {
             // Check if auth error
-            if (stderr_buf != null && "auth" in stderr_buf.down()) {
+            if (stderr_clean.length > 0 && "auth" in stderr_clean.down()) {
                 authentication_required();
                 throw new IOError.PERMISSION_DENIED("Please login with Google first");
             }
+
+            // Non-fatal warning-only stderr: return stdout if we have it
+            if (stderr_clean.length == 0 && stdout_buf != null && stdout_buf.strip().length > 0) {
+                return stdout_buf;
+            }
+
             throw new IOError.FAILED(
-                "Gemini CLI error: %s".printf(stderr_buf ?? "unknown error")
+                "Gemini CLI error: %s".printf(
+                    stderr_clean.length > 0 ? stderr_clean : "unknown error"
+                )
             );
         }
 
@@ -218,7 +373,7 @@ public class Gemini.Service : GLib.Object {
     }
 
 
-    private string truncate_for_prompt(string text, int max_chars) {
+    internal string truncate_for_prompt(string text, int max_chars) {
         if (text == null) return "";
         if (text.length <= max_chars) return text;
         return text.substring(0, max_chars) + "
@@ -271,39 +426,35 @@ public class Gemini.Service : GLib.Object {
 ".printf(truncate_for_prompt(body, 12000)));
 
         if (email.attachments != null && email.attachments.size > 0) {
-            ctx.append("[Attachments]
-");
+            ctx.append("[Attachments]\n");
             int index = 1;
             foreach (var attachment in email.attachments) {
                 string name = attachment.file != null ? attachment.file.get_basename() : "attachment";
                 string mime = attachment.content_type != null ? attachment.content_type.to_string() : "unknown";
-                ctx.append("%d. %s (%s)
-".printf(index, name, mime));
+                ctx.append("%d. %s (%s)\n".printf(index, name, mime));
 
-                bool extracted = false;
                 if (attachment.file != null && mime.has_prefix("text/")) {
+                    // Inline text content directly
                     try {
                         uint8[] bytes;
                         string? etag;
                         if (attachment.file.load_contents(null, out bytes, out etag)) {
                             string text = (string) bytes;
                             if (text != null && text.strip().length > 0) {
-                                ctx.append("Extracted text:
-%s
-
-".printf(truncate_for_prompt(text, 6000)));
-                                extracted = true;
+                                ctx.append("Extracted text:\n%s\n\n".printf(
+                                    truncate_for_prompt(text, 6000)));
                             }
                         }
                     } catch (Error e) {
                         debug("Attachment text extraction failed: %s", e.message);
                     }
-                }
-
-                if (!extracted) {
-                    ctx.append("Extracted text: [unavailable]
-
-");
+                } else if (attachment.file != null) {
+                    // For PDFs, images, and other binary files: pass the file path
+                    // using gemini-cli's @ syntax so it can analyze them multimodally
+                    string file_path = attachment.file.get_path();
+                    if (file_path != null) {
+                        ctx.append("File content: @%s\n\n".printf(file_path));
+                    }
                 }
                 index++;
             }
@@ -393,4 +544,80 @@ public class Gemini.Service : GLib.Object {
             default: return code.up(); // Fallback to uppercase code
         }
     }
+
+    /**
+     * Load the currently active Gemini account from ~/.gemini/google_accounts.json.
+     */
+    public void load_active_account() {
+        string path = Path.build_filename(
+            Environment.get_home_dir(), GEMINI_CONFIG_DIR, GOOGLE_ACCOUNTS_FILE
+        );
+
+        try {
+            string contents;
+            FileUtils.get_contents(path, out contents);
+            var parser = new Json.Parser();
+            parser.load_from_data(contents);
+            var root = parser.get_root();
+            if (root != null && root.get_node_type() == Json.NodeType.OBJECT) {
+                var obj = root.get_object();
+                if (obj.has_member("active")) {
+                    this.active_account = obj.get_string_member("active");
+                }
+            }
+        } catch (Error e) {
+            debug("No active Gemini account found: %s", e.message);
+        }
+    }
+
+    /**
+     * Switch the active Gemini account by writing to ~/.gemini/google_accounts.json.
+     */
+    public void switch_active_account(string email) throws Error {
+        string dir_path = Path.build_filename(
+            Environment.get_home_dir(), GEMINI_CONFIG_DIR
+        );
+        string file_path = Path.build_filename(dir_path, GOOGLE_ACCOUNTS_FILE);
+
+        // Ensure directory exists
+        DirUtils.create_with_parents(dir_path, 0755);
+
+        // Read existing file to preserve "old" array
+        Json.Array old_array = new Json.Array();
+        try {
+            string contents;
+            FileUtils.get_contents(file_path, out contents);
+            var parser = new Json.Parser();
+            parser.load_from_data(contents);
+            var root = parser.get_root();
+            if (root != null && root.get_node_type() == Json.NodeType.OBJECT) {
+                var obj = root.get_object();
+                if (obj.has_member("old")) {
+                    old_array = obj.get_array_member("old");
+                }
+            }
+        } catch (Error e) {
+            // File doesn't exist yet, that's fine
+        }
+
+        // Build new JSON
+        var generator = new Json.Generator();
+        generator.pretty = true;
+        var root_node = new Json.Node(Json.NodeType.OBJECT);
+        var obj = new Json.Object();
+        obj.set_string_member("active", email);
+        obj.set_array_member("old", old_array);
+        root_node.set_object(obj);
+        generator.set_root(root_node);
+
+        string json = generator.to_data(null);
+        FileUtils.set_contents(file_path, json);
+
+        this.active_account = email;
+    }
+
+    /**
+     * Signal emitted when the active account changes.
+     */
+    public signal void active_account_changed(string? email);
 }
