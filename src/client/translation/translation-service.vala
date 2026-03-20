@@ -2,6 +2,7 @@
  * Translation service — wraps translate-shell (trans) CLI.
  * Checks bundled binary at /usr/share/geary-gemini/bin/trans first,
  * then falls back to system PATH.
+ * Text is passed via stdin to handle any length.
  */
 
 namespace Translation {
@@ -30,6 +31,33 @@ public class Service : GLib.Object {
         return find_trans_binary() != null;
     }
 
+    /**
+     * Clean text for translation: strip zero-width chars, collapse whitespace.
+     */
+    private string clean_text(string text) {
+        var result = new StringBuilder();
+        bool last_was_space = false;
+        unichar c;
+        int i = 0;
+        while (text.get_next_char(ref i, out c)) {
+            // Skip zero-width characters (ZWSP, ZWNJ, ZWJ, FEFF, soft hyphen)
+            if (c == 0x200B || c == 0x200C || c == 0x200D || c == 0xFEFF || c == 0x00AD) {
+                continue;
+            }
+            // Collapse multiple whitespace
+            if (c.isspace()) {
+                if (!last_was_space) {
+                    result.append_unichar(' ');
+                    last_was_space = true;
+                }
+                continue;
+            }
+            last_was_space = false;
+            result.append_unichar(c);
+        }
+        return result.str.strip();
+    }
+
     public async string? detect_language(string text) throws GLib.Error {
         if (Geary.String.is_empty_or_whitespace(text)) {
             return null;
@@ -40,14 +68,15 @@ public class Service : GLib.Object {
             throw new GLib.IOError.NOT_FOUND("translate-shell (trans) not found");
         }
 
-        string[] argv = {
-            trans,
-            "-brief",
-            "-identify",
-            text
-        };
+        string cleaned = clean_text(text);
+        // Only send first 500 chars for detection
+        string sample = cleaned;
+        if (cleaned.length > 500) {
+            sample = cleaned.substring(0, 500);
+        }
 
-        return yield run_command(argv);
+        string[] argv = { trans, "-brief", "-identify" };
+        return yield run_command_with_stdin(argv, sample);
     }
 
     public async string? translate(string text, string? target_lang = null) throws GLib.Error {
@@ -61,14 +90,13 @@ public class Service : GLib.Object {
             throw new GLib.IOError.NOT_FOUND("translate-shell (trans) not found");
         }
 
-        string[] argv = {
-            trans,
-            "-brief",
-            ":%s".printf(language),
-            text
-        };
+        string cleaned = clean_text(text);
+        if (Geary.String.is_empty_or_whitespace(cleaned)) {
+            return null;
+        }
 
-        return yield run_command(argv);
+        string[] argv = { trans, "-brief", ":%s".printf(language) };
+        return yield run_command_with_stdin(argv, cleaned);
     }
 
     private string get_default_target_language() {
@@ -85,20 +113,19 @@ public class Service : GLib.Object {
                 return lang;
             }
         }
-
         return "en";
     }
 
-    private async string? run_command(string[] argv) throws GLib.Error {
+    private async string? run_command_with_stdin(string[] argv, string input) throws GLib.Error {
         Subprocess process = new Subprocess.newv(
             argv,
-            SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE
+            SubprocessFlags.STDIN_PIPE | SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_PIPE
         );
 
         string? stdout_buf = null;
         string? stderr_buf = null;
         yield process.communicate_utf8_async(
-            null,
+            input,
             null,
             out stdout_buf,
             out stderr_buf

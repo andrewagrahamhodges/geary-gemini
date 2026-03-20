@@ -2517,63 +2517,60 @@ public class Application.MainWindow :
                 return;
             }
 
-            // Split translated text into lines for text-node replacement
-            string[] translated_lines = translated.split("\n");
+            // Escape translated text for safe JS injection
+            string js_safe = translated.replace("\\", "\\\\");
+            js_safe = js_safe.replace("\n", "\\n");
+            js_safe = js_safe.replace("\r", "");
+            js_safe = js_safe.replace("'", "\\'");
 
-            // Build JavaScript that walks text nodes and replaces text content
-            // while preserving HTML structure (images, links, formatting)
+            // Build JS that replaces only visible text nodes, skipping
+            // hidden elements, images, scripts, styles, and preheader spans
             var js = new StringBuilder();
             js.append("(function() {");
-            // Collect all text nodes in document order
+            js.append("var translated = '");
+            js.append(js_safe);
+            js.append("';");
+            // Split into sentences/segments for mapping to text nodes
+            js.append("var segments = translated.split('\n').filter(function(s) { return s.trim().length > 0; });");
+            // Collect visible text nodes, skipping hidden elements
             js.append("var textNodes = [];");
-            js.append("var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);");
+            js.append("var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {");
+            js.append("  acceptNode: function(node) {");
+            js.append("    var el = node.parentElement;");
+            js.append("    if (!el) return NodeFilter.FILTER_REJECT;");
+            js.append("    var tag = el.tagName;");
+            js.append("    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;");
+            // Skip hidden elements (preheader text, display:none, etc.)
+            js.append("    var style = window.getComputedStyle(el);");
+            js.append("    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return NodeFilter.FILTER_REJECT;");
+            js.append("    if (parseFloat(style.maxHeight) === 0 || parseFloat(style.maxWidth) === 0) return NodeFilter.FILTER_REJECT;");
+            js.append("    var text = node.textContent.trim();");
+            // Skip whitespace-only nodes and single non-breaking spaces
+            js.append("    if (text.length === 0 || text === '\u00a0') return NodeFilter.FILTER_REJECT;");
+            js.append("    return NodeFilter.FILTER_ACCEPT;");
+            js.append("  }");
+            js.append("}, false);");
             js.append("var node;");
-            js.append("while (node = walker.nextNode()) {");
-            js.append("  var t = node.textContent.trim();");
-            js.append("  if (t.length > 0) textNodes.push(node);");
-            js.append("}");
-            // Build the translated lines array in JS
-            js.append("var translated = [");
-            for (int i = 0; i < translated_lines.length; i++) {
-                string line = translated_lines[i].strip();
-                if (line.length == 0) {
-                    continue;
-                }
-                // Escape for JS string
-                string js_line = line.replace("\\", "\\\\");
-                js_line = js_line.replace("'", "\\'");
-                if (i > 0) {
-                    js.append(",");
-                }
-                js.append("'");
-                js.append(js_line);
-                js.append("'");
-            }
-            js.append("];");
-            // Replace text nodes with translated lines (1:1 mapping where possible)
-            js.append("var combined = translated.join(' ');");
-            js.append("if (textNodes.length === 1 || translated.length <= 1) {");
-            js.append("  textNodes.forEach(function(n, i) {");
-            js.append("    if (i === 0) n.textContent = combined;");
-            js.append("    else n.textContent = '';");
-            js.append("  });");
+            js.append("while (node = walker.nextNode()) textNodes.push(node);");
+            // Map translated segments to text nodes
+            js.append("if (segments.length === 0) return;");
+            js.append("if (textNodes.length <= 1) {");
+            js.append("  if (textNodes.length === 1) textNodes[0].textContent = segments.join(' ');");
             js.append("} else {");
             js.append("  for (var i = 0; i < textNodes.length; i++) {");
-            js.append("    if (i < translated.length) textNodes[i].textContent = translated[i];");
-            js.append("    else textNodes[i].textContent = '';");
+            js.append("    if (i < segments.length) textNodes[i].textContent = segments[i];");
             js.append("  }");
-            js.append("  if (translated.length > textNodes.length && textNodes.length > 0) {");
-            js.append("    var extra = translated.slice(textNodes.length).join(' ');");
-            js.append("    textNodes[textNodes.length-1].textContent += ' ' + extra;");
+            js.append("  if (segments.length > textNodes.length && textNodes.length > 0) {");
+            js.append("    textNodes[textNodes.length-1].textContent += ' ' + segments.slice(textNodes.length).join(' ');");
             js.append("  }");
             js.append("}");
-            // Add translation banner at top of body
+            // Add translation banner
             js.append("var existing = document.getElementById('geary-translate-banner');");
             js.append("if (!existing) {");
             js.append("  var banner = document.createElement('div');");
             js.append("  banner.id = 'geary-translate-banner';");
-            js.append("  banner.style.cssText = 'background:#e8f4fd;border-left:4px solid #2196F3;padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:12px;color:#1565C0;';");
-            js.append("  banner.textContent = 'Translated — click Translate again to show original';");
+            js.append("  banner.style.cssText = 'background:#e8f4fd;border-left:4px solid #2196F3;padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:12px;color:#1565C0;position:sticky;top:0;z-index:9999;';");
+            js.append("  banner.textContent = 'Translated \u2014 click Translate again to show original';");
             js.append("  document.body.insertBefore(banner, document.body.firstChild);");
             js.append("}");
             js.append("})();");
