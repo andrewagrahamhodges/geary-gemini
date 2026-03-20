@@ -1623,6 +1623,9 @@ public class Application.MainWindow :
                 AccountContext? context = get_selected_account_context();
                 if (context != null && convo.get_count() > 0) {
                     try {
+                        // Reset translation state when switching conversations
+                        this.is_showing_translation = false;
+
                         yield this.conversation_viewer.load_conversation(
                             convo,
                             scroll_to,
