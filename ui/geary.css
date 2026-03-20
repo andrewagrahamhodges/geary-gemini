@@ -114,6 +114,15 @@ row.conversation-list.unread .participants {
   font-weight: bold;
 }
 
+/* Selected row — white text so it is readable on highlight background */
+row.conversation-list:selected .subject,
+row.conversation-list:selected .participants,
+row.conversation-list:selected .date,
+row.conversation-list:selected .preview,
+row.conversation-list:selected .tertiary {
+  color: white;
+}
+
 row.conversation-list .count-badge {
   background: #888888;
   color: white;
