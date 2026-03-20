@@ -2775,20 +2775,17 @@ public class Application.MainWindow :
             // use the simpler approach: replace ALL visible text nodes with the full translated text
             // but do it in a way that respects the DOM structure
 
-            // Escape for JS
-            string js_safe = result.replace("|||GEARY_BLOCK|||", "\n\n");
-            js_safe = js_safe.replace("\\", "\\\\");
-            js_safe = js_safe.replace("'", "\\'");
-            js_safe = js_safe.replace("\n", "\\n");
-            js_safe = js_safe.replace("\r", "");
+            // Use URI encoding to safely pass translated text into JS
+            string clean_result = result.replace("|||GEARY_BLOCK|||", "\n\n");
+            string uri_encoded = GLib.Uri.escape_string(clean_result, null, true);
 
             // Phase 2: Replace text in tagged elements
             var inject_js = new StringBuilder();
             inject_js.append("(function() {");
-            inject_js.append("var fullText = '");
-            inject_js.append(js_safe);
-            inject_js.append("';");
-            inject_js.append("var blocks = fullText.split('\n\n').filter(function(s) { return s.trim().length > 0; });");
+            inject_js.append("var fullText = decodeURIComponent('");
+            inject_js.append(uri_encoded);
+            inject_js.append("');");
+            inject_js.append("var blocks = fullText.split(String.fromCharCode(10)+String.fromCharCode(10)).filter(function(s) { return s.trim().length > 0; });");
 
             // Walk tagged elements and replace their text
             inject_js.append("var tagged = document.querySelectorAll('[data-translate-id]');");
