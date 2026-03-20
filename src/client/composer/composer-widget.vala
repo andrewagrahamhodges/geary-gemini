@@ -2549,44 +2549,104 @@ public class Composer.Widget : Gtk.EventBox, Geary.BaseInterface {
      * Handle AI generation request from the editor.
      */
     private void on_ai_generate_requested(string prompt) {
-        this.generate_ai_content.begin(prompt);
-    }
-
-    private async void generate_ai_content(string prompt) {
-        // Get the Gemini service from the application
         Application.Client? app = null;
         if (this.container != null) {
             app = this.container.top_window.application as Application.Client;
         }
-
-        if (app == null || app.gemini_service == null) {
-            warning("Could not access Gemini service");
+        if (app == null) {
+            warning("Unable to access application for AI compose");
             return;
         }
 
-        var gemini = app.gemini_service;
+        if (!app.gemini_service.is_configured()) {
+            // Show error in the main window
+            var main_window = this.container.top_window as Application.MainWindow;
+            if (main_window != null) {
+                main_window.add_notification(new Components.InAppNotification(
+                    _("Gemini API key not configured. Set it in Preferences \u2192 AI.")
+                ));
+            }
+            return;
+        }
 
+        // Show generating notification
+        var main_window = this.container.top_window as Application.MainWindow;
+        Components.InAppNotification? generating_notif = null;
+        if (main_window != null) {
+            generating_notif = new Components.InAppNotification(_("AI is generating..."), 60);
+            main_window.add_notification(generating_notif);
+        }
+
+        // Gather conversation context for replies
+        do_ai_generate.begin(app, prompt, main_window, generating_notif);
+    }
+
+    private async void do_ai_generate(
+        Application.Client app,
+        string prompt,
+        Application.MainWindow? main_window,
+        Components.InAppNotification? generating_notif
+    ) {
+        // Get the quoted/reply text as context for Gemini
+        string? context = null;
         try {
-            // Generate email draft based on the prompt
-            // Context could be added in the future if the composer stores the original email
-            string draft = yield gemini.help_compose(prompt, null);
-
-            // Convert newlines to HTML breaks and insert into editor
-            string html_content = draft.replace("\n", "<br>");
-            this.editor.body.insert_html(html_content);
+            context = yield this.editor.body.get_text();
         } catch (Error e) {
-            warning("AI composition failed: %s", e.message);
-            // Show error to user via the main window if possible
-            if (this.container != null) {
-                var main = this.container.top_window as Application.MainWindow;
-                if (main != null) {
-                    var notification = new Components.InAppNotification(
-                        _("AI writing failed: %s").printf(e.message)
+            // Non-fatal, just proceed without context
+        }
+
+        // Also add subject and recipient info
+        var context_builder = new StringBuilder();
+        if (this.context_type != ContextType.NONE) {
+            context_builder.append("This is a %s.\n".printf(
+                this.context_type == ContextType.REPLY_SENDER ? "reply" :
+                this.context_type == ContextType.REPLY_ALL ? "reply-all" :
+                this.context_type == ContextType.FORWARD ? "forward" : "new email"
+            ));
+        }
+        if (this.subject.strip().length > 0) {
+            context_builder.append("Subject: %s\n".printf(this.subject));
+        }
+        if (this.to.strip().length > 0) {
+            context_builder.append("To: %s\n".printf(this.to));
+        }
+        if (!Geary.String.is_empty_or_whitespace(context)) {
+            context_builder.append("\nConversation so far:\n");
+            context_builder.append(context);
+        }
+
+        string? full_context = context_builder.str.strip().length > 0
+            ? context_builder.str : null;
+
+        app.gemini_service.help_compose.begin(prompt, full_context, (obj, res) => {
+            try {
+                string? response = app.gemini_service.help_compose.end(res);
+                if (generating_notif != null) {
+                    generating_notif.close();
+                }
+                if (!Geary.String.is_empty_or_whitespace(response)) {
+                    this.editor.body.insert_html(
+                        "<p>" + response.replace("\n", "<br>") + "</p>"
                     );
-                    main.add_notification(notification);
+                } else {
+                    if (main_window != null) {
+                        main_window.add_notification(new Components.InAppNotification(
+                            _("AI returned empty response")
+                        ));
+                    }
+                }
+            } catch (GLib.Error err) {
+                if (generating_notif != null) {
+                    generating_notif.close();
+                }
+                warning("AI compose failed: %s", err.message);
+                if (main_window != null) {
+                    main_window.add_notification(new Components.InAppNotification(
+                        _("AI error: %s").printf(err.message)
+                    ));
                 }
             }
-        }
+        });
     }
 
 }

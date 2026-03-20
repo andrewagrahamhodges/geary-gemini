@@ -70,6 +70,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     wget \
     file \
+    && curl -sL https://git.io/trans -o /usr/local/bin/trans \
+    && chmod +x /usr/local/bin/trans \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Meson 1.8.x via pip (Ubuntu 24.04 ships with 1.3.2, Geary needs >= 1.7)

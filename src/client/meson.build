@@ -88,6 +88,9 @@ client_vala_sources = files(
   'composer/contact-entry-completion.vala',
   'composer/spell-check-popover.vala',
 
+  'gemini/gemini-service.vala',
+  'translation/translation-service.vala',
+
   'conversation-list/conversation-list-model.vala',
   'conversation-list/conversation-list-participant.vala',
   'conversation-list/conversation-list-row.vala',
@@ -115,8 +118,6 @@ client_vala_sources = files(
   'folder-list/folder-list-search-branch.vala',
   'folder-list/folder-list-special-grouping.vala',
 
-  'gemini/gemini-service.vala',
-  'gemini/gemini-sidebar.vala',
 
   'plugin/plugin-account.vala',
   'plugin/plugin-action-bar.vala',

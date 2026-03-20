@@ -31,7 +31,7 @@ services:
         echo "=========================================="
         echo "CONFIGURE"
         echo "=========================================="
-        meson setup $$BUILD_DIR --prefix=/usr --buildtype=release -Dprofile=release
+        CFLAGS="-Wno-incompatible-pointer-types -Wno-int-conversion" meson setup $$BUILD_DIR --prefix=/usr --buildtype=release -Dprofile=release
 
         echo "=========================================="
         echo "BUILD"
@@ -61,6 +61,11 @@ services:
         npm install --prefix "$$GEMINI_DIR" @google/gemini-cli
         rm -rf "$$GEMINI_DIR/node/share" "$$GEMINI_DIR/node/include"
 
+
+        echo "Bundling translate-shell..."
+        mkdir -p "$$STAGING/usr/share/geary-gemini/bin"
+        cp /usr/local/bin/trans "$$STAGING/usr/share/geary-gemini/bin/trans"
+        chmod +x "$$STAGING/usr/share/geary-gemini/bin/trans"
 
         VERSION=$$(grep -m1 "version:" /src/meson.build | cut -d"'" -f2)
         mkdir -p $$STAGING/DEBIAN
